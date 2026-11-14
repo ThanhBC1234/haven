@@ -1,19 +1,18 @@
 extends Area2D
-## Đạn của người chơi (pixel). Bay thẳng, chạm đất thì vỡ, trúng quái thì quái chết, trúng boss thì boss mất máu.
 
 @export var speed := 720.0
-@export var life_time := 1.2       # bay tối đa bao lâu
-@export var damage := 1            # trừ máu boss mỗi viên
+@export var life_time := 1.2
+@export var damage := 1
 @export var show_placeholder := true
 
-var direction := Vector2.RIGHT     # Ball đặt khi bắn
+var direction := Vector2.RIGHT
 var _age := 0.0
 
 
 func _ready() -> void:
-	rotation = direction.angle()                  # đạn quay theo hướng bay
-	body_entered.connect(_on_body_entered)        # chạm đất / quái
-	area_entered.connect(_on_area_entered)        # chạm vùng trúng đạn của boss
+	rotation = direction.angle()
+	body_entered.connect(_on_body_entered)
+	area_entered.connect(_on_area_entered)
 
 
 func _physics_process(delta: float) -> void:
@@ -27,9 +26,9 @@ func _physics_process(delta: float) -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body is Enemy:
 		if not body.dead:
-			body.squash()                         # bắn trúng quái: quái bẹp như bị dẫm
+			body.squash()
 	elif body is Ball:
-		return                                    # không trúng chính mình
+		return
 	queue_free()
 
 

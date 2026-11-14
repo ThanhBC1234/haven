@@ -2,7 +2,7 @@
 
 Game hackathon "Bounce Back": con lật đật (trái banh đỏ trên đế vàng) nhảy và nảy theo vật lý thật.
 Copy cả thư mục đi đâu cũng chạy được. Màn chơi và nhân vật là thiết kế riêng, không lấy từ game khác.
-Chữ trong game bằng tiếng Anh; ghi chú trong code bằng tiếng Việt.
+Chữ trong game bằng tiếng Anh. Code không có ghi chú; cách chỉnh từng phần xem các mục bên dưới.
 
 ## Mở và chạy
 
@@ -35,6 +35,7 @@ Godot 4.5 → **Import** → chọn `project.godot` → **F5**.
 |---|---|---|
 | Trái tim | `+` | +1 mạng (tối đa 3) |
 | Khiên | `h` | Đỡ 1 đòn, có vòng sáng quanh nhân vật; vỡ khiên thì được miễn sát thương 1,2 giây |
+| Jump boost | `j` | Mũi tên xanh: 10 giây nhảy mạnh hơn 25% (cao gấp khoảng 1,5 lần). Dưới chân hiện mũi tên, HUD có thanh đếm ngược. Chỉnh `Boost Duration`, `Boost Power` ở `scenes/ball.tscn` |
 | Súng | `g` | +15 đạn; mọc lại sau 8 giây (đấu boss không bao giờ hết đạn) |
 | Boss | `M` | GLOOMFANG: quả cầu quái vật **chỉ lăn trên mặt đất** (đặt `M` ngay trên mặt đất). Lăn qua lại, hiện **dấu ! đỏ** và rung lắc rồi **lao** về phía bạn, đâm tường thì **choáng** (sao vàng quay). Còn nửa máu thì đỏ lên, lăn và lao nhanh hơn. 12 máu. Cách đánh: **bắn ngang** (F / J) hoặc **nhảy lên đầu** (mỗi lần trừ 1 máu); đụng ngang thân thì bị thương |
 | Cổng boss | `G` | Chặn đường, mở khi hạ boss |
@@ -45,7 +46,9 @@ Số chỉnh ở Inspector: boss (`scenes/objects/boss.tscn`: `Max Hp`, tốc đ
 
 **Hướng dẫn trong game:** menu có nút **HOW TO PLAY** (nội dung sửa ở `HOW_TO_PLAY` trong `scripts/ui/menu.gd`); nhặt súng thì hiện "Press F or J to shoot"; ô đạn luôn ghi phím bắn; boss xuất hiện thì hiện cách đánh, dưới thanh máu boss có dòng nhắc.
 
-**Hình pixel:** mọi hình mới (boss, đạn, tim, khiên, súng, thanh máu) vẽ bằng code từ các mảng chữ trong
+**Hình của nhóm:** trái tim, khiên, jump boost dùng ảnh 16 x 16 trong `assets/items/` (`heart.png`, `shield.png`, `jump_boost.png`; nền đã chuyển trong suốt), vẽ phóng gấp 2. Ghi đè file là đổi hình, ở cả ngoài màn lẫn trên HUD.
+
+**Hình pixel:** các hình còn lại (boss, đạn, tim, khiên, súng, thanh máu) vẽ bằng code từ các mảng chữ trong
 `scripts/pixel_art.gd`. Sửa chữ là đổi hình. Khi có PNG: mở scene tương ứng (`boss.tscn`, `player_bullet.tscn`,
 `pickup.tscn`), thêm `Sprite2D`, tắt `Show Placeholder`.
 
@@ -122,6 +125,17 @@ bật nhảy thì lò xo duỗi, chạm đất thì banh bẹp (rơi càng mạn
 - Chỉ trái banh có va chạm (vòng tròn 30 px). Đầu và lò xo chỉ là hình: chạm gai trần bằng đầu không bị thương.
 - Muốn quay lại hình vẽ bằng code: ẩn node `Sprite` và bật `Show Placeholder` ở node `Ball`.
 
+## Logo và font
+
+- **Logo tiêu đề:** `assets/ui/logo.png` (ảnh của nhóm, 585 x 214, hiện ở menu với 70% kích thước, phập phồng nhẹ).
+  Thay file là đổi logo; đổi cỡ ở `LOGO_SIZE` trong `scripts/ui/menu.gd`.
+- **Font chính:** Peaberry (`assets/fonts/PeaberryBase.ttf`), font pixel của Emily Huo, giấy phép **SIL Open Font License**
+  (`assets/fonts/Peaberry-OFL.txt`): dùng miễn phí cả thương mại, không bắt buộc ghi tên. Có đủ dấu tiếng Việt.
+  - Font sắc nét nhất ở cỡ **16, 32, 48**: dùng các hằng `FONT_SMALL`, `FONT_MEDIUM`, `FONT_LARGE` trong `scripts/ui/ui_theme.gd`
+    thay vì gõ số khác.
+  - Ký tự font không có (ví dụ ★) tự lấy từ font hệ thống.
+  - Đổi font: thay `FONT_PATH` trong `ui_theme.gd`.
+
 ## Đồ họa từ gói miễn phí và ghi công
 
 | Gói | File trong project | Dùng cho |
@@ -174,4 +188,4 @@ Mỗi đồ vật đang tự vẽ hình tạm bằng code. Để thay bằng PNG
 godot --headless --fixed-fps 60 --path . res://tests/smoke.tscn
 ```
 
-Chạy 68 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.
+Chạy 71 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.

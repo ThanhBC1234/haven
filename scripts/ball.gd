@@ -1,101 +1,99 @@
 class_name Ball
 extends RigidBody2D
-## Con lật đật (nhân vật chính). Điều khiển:
-##   - Giữ A (hoặc ←): nghiêng dần sang TRÁI, tích lực. Giữ D (hoặc →): nghiêng dần sang PHẢI.
-##   - Bấm Space / W / ↑: NHẢY theo hướng và lực đang tích. Giữ càng lâu thì nhảy càng mạnh, càng xa.
-##   - Thả A/D mà không bấm nhảy: lật đật đứng thẳng lại, không nhảy (đổi ý).
-##   - Bấm nhảy khi không giữ A/D: nhảy thẳng lên với lực `straight_jump`.
-##   - Chỉ nhảy được khi đang chạm đất (bấm sớm một chút trước khi chạm đất vẫn tính).
-##   - Rơi xuống thì nảy như bóng thật (thấp dần rồi đứng yên), thân lắc lư kiểu lật đật.
-## Là RigidBody2D nên Godot tự tính vật lý. Độ nảy chỉnh ở Physics Material của scenes/ball.tscn (Bounce).
-## Các con số chỉnh cảm giác: chọn scenes/ball.tscn rồi sửa ở Inspector.
 
-signal hurt       # bị thương (gai, quái, rơi vực); play.gd nghe để trừ mạng
-signal launched   # vừa nhảy (để gắn âm thanh, hoạt ảnh)
-signal landed(impact_speed: float)   # vừa chạm đất, kèm tốc độ rơi (để hoạt ảnh bẹp, âm thanh)
-signal shield_changed(on: bool)      # có / mất khiên (HUD hiện biểu tượng)
-signal ammo_changed(ammo: int)       # số đạn thay đổi (HUD hiện số đạn)
-signal shot                          # vừa bắn (để gắn âm thanh)
+signal hurt
+signal launched
+signal landed(impact_speed: float)
+signal shield_changed(on: bool)
+signal ammo_changed(ammo: int)
+signal shot
+signal boost_changed(seconds_left: float)
 
 const BULLET_SCENE := preload("res://scenes/objects/player_bullet.tscn")
+const JUMP_BOOST_TEXTURE := preload("res://assets/items/jump_boost.png")
 
-@export var radius := 15.0              # bán kính thân (pixel); 1 ô = 32 pixel
+@export var radius := 15.0
 
 @export_group("Nghiêng và nhảy")
-@export var charge_time := 0.7          # giữ phím bao lâu thì nghiêng tối đa (giây)
-@export var min_tilt_deg := 12.0        # góc nhảy khi bấm nhanh (tính từ phương thẳng đứng)
-@export var max_tilt_deg := 42.0        # góc nhảy khi giữ đủ lâu
-@export var min_speed := 300.0          # lực nhảy khi bấm nhanh (nhún nhỏ, khoảng 1 ô)
-@export var max_speed := 950.0          # lực nhảy khi giữ đủ lâu (cao khoảng 5.5 ô)
-@export var coyote_time := 0.12         # vừa nảy khỏi mặt đất vẫn nhảy được trong 0.12 giây
-@export var release_buffer := 0.15      # bấm nhảy khi còn trên không, chạm đất trong 0.15 giây vẫn nhảy
-@export var straight_jump := 0.5        # lực (0..1) khi nhảy thẳng lên (bấm nhảy mà không giữ A/D)
+@export var charge_time := 0.7
+@export var min_tilt_deg := 12.0
+@export var max_tilt_deg := 42.0
+@export var min_speed := 300.0
+@export var max_speed := 950.0
+@export var coyote_time := 0.12
+@export var release_buffer := 0.15
+@export var straight_jump := 0.5
 
 @export_group("Lắc lư")
-@export var wobble_stiffness := 120.0   # lò xo kéo thân về thẳng đứng (lớn = lắc nhanh)
-@export var wobble_damping := 6.0       # giảm lắc (lớn = mau đứng yên)
+@export var wobble_stiffness := 120.0
+@export var wobble_damping := 6.0
 
 @export_group("Súng và khiên")
-@export var shoot_cooldown := 0.18      # thời gian chờ giữa 2 phát bắn
+@export var shoot_cooldown := 0.18
 @export var max_ammo := 99
-@export var invuln_after_hit := 1.2     # sau khi bị đánh (hoặc vỡ khiên) được miễn sát thương bao lâu
+@export var invuln_after_hit := 1.2
 
-@export var show_placeholder := false   # vẽ hình tạm bằng code; tắt khi đã có hình thật (node Sprite)
+@export_group("Jump boost")
+@export var boost_duration := 10.0
+@export var boost_power := 1.25
 
-var on_ground := false        # đang chạm đất không (tính lại mỗi khung vật lý)
-var dead := false             # đang chờ hồi sinh: không điều khiển, không bị thương
-var charge := 0.0             # 0..1: đã giữ phím được bao nhiêu phần của charge_time
-var charge_dir := 0           # -1 đang giữ A (nghiêng trái), 1 đang giữ D (nghiêng phải), 0 không giữ
-var tilt := 0.0               # góc nghiêng đang hiển thị của thân (radian), chỉ để vẽ
-var _tilt_vel := 0.0          # vận tốc lắc lư của thân
+@export var show_placeholder := false
+
+var on_ground := false
+var dead := false
+var charge := 0.0
+var charge_dir := 0
+var tilt := 0.0
+var _tilt_vel := 0.0
 var _coyote := 0.0
-var _jump_request := {}       # cú nhảy đang chờ chạm đất: {"dir": -1/1, "charge": 0..1, "time": giây còn lại}
+var _jump_request := {}
 var _was_on_ground := false
-var _last_vy := 0.0          # vận tốc rơi ở khung trước (để biết chạm đất mạnh cỡ nào)
-var _teleport_to = null       # vị trí cần dịch tới ở khung vật lý tới (Vector2 hoặc null)
-var _bounce := 0.0            # > 0: khung vật lý tới sẽ bật lên với vận tốc này
-var ammo := 0                 # số đạn đang có (nhặt súng để có đạn)
-var has_shield := false       # đang có khiên: đỡ được 1 đòn
-var invuln := 0.0             # còn miễn sát thương bao lâu (nhấp nháy)
-var facing := 1               # hướng đang quay mặt (1 phải, -1 trái), để bắn ngang
+var _last_vy := 0.0
+var _teleport_to = null
+var _bounce := 0.0
+var ammo := 0
+var has_shield := false
+var invuln := 0.0
+var facing := 1
 var _shoot_timer := 0.0
+var boost_time := 0.0
 var _time := 0.0
 
 
-## Chạy một lần khi nhân vật được tạo.
 func _ready() -> void:
 	add_to_group("ball")
-	contact_monitor = true                           # bật để biết đang chạm vào đâu
+	contact_monitor = true
 	max_contacts_reported = 8
 	can_sleep = false
-	lock_rotation = true                             # lật đật không lăn: thân thật luôn đứng thẳng
-	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE  # chống xuyên tường khi bay nhanh
+	lock_rotation = true
+	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 
 
-## Godot gọi 60 lần mỗi giây: đọc phím, tích lực, cập nhật lắc lư.
 func _physics_process(delta: float) -> void:
 	if not dead:
 		_read_input(delta)
 	if not _jump_request.is_empty():
 		_jump_request["time"] -= delta
 		if _jump_request["time"] <= 0.0:
-			_jump_request = {}                       # quá lâu không chạm đất: bỏ cú nhảy
+			_jump_request = {}
 	_coyote = maxf(0.0, _coyote - delta)
 	_shoot_timer = maxf(0.0, _shoot_timer - delta)
 	invuln = maxf(0.0, invuln - delta)
+	if boost_time > 0.0:
+		boost_time = maxf(0.0, boost_time - delta)
+		boost_changed.emit(boost_time)
 	_time += delta
 	if charge_dir != 0:
-		facing = charge_dir                          # quay mặt theo hướng đang nghiêng
+		facing = charge_dir
 	elif absf(linear_velocity.x) > 40.0:
 		facing = 1 if linear_velocity.x > 0.0 else -1
 	if not dead and Input.is_action_just_pressed("shoot"):
 		shoot()
-	modulate.a = (0.35 if int(_time * 14.0) % 2 == 0 else 1.0) if invuln > 0.0 else 1.0   # nhấp nháy khi miễn sát thương
+	modulate.a = (0.35 if int(_time * 14.0) % 2 == 0 else 1.0) if invuln > 0.0 else 1.0
 	_update_wobble(delta)
 	queue_redraw()
 
 
-## Bắn một viên đạn. Đang giữ A/D thì bắn theo mũi tên (chéo lên), không thì bắn ngang theo hướng quay mặt.
 func shoot() -> void:
 	if ammo <= 0 or _shoot_timer > 0.0 or dead:
 		return
@@ -107,33 +105,34 @@ func shoot() -> void:
 		dir = jump_velocity(charge_dir, maxf(charge, 0.3)).normalized()
 	var b: Node2D = BULLET_SCENE.instantiate()
 	b.direction = dir
-	b.position = global_position + Vector2(0, -2) + dir * 22.0   # bắn ngang tầm trái banh để trúng quái thấp
-	get_parent().add_child(b)                         # đạn nằm trong thế giới, không bay theo nhân vật
+	b.position = global_position + Vector2(0, -2) + dir * 22.0
+	get_parent().add_child(b)
 	shot.emit()
 
 
-## Nhặt súng: thêm đạn.
 func add_ammo(n: int) -> void:
 	ammo = mini(max_ammo, ammo + n)
 	ammo_changed.emit(ammo)
 
 
-## Nhặt khiên.
+func give_jump_boost() -> void:
+	boost_time = boost_duration
+	boost_changed.emit(boost_time)
+
+
 func give_shield() -> void:
 	has_shield = true
 	shield_changed.emit(true)
 
 
-## Giữ A/D để nghiêng và tích lực; bấm Space/W/↑ để nhảy; thả A/D mà không nhảy thì hủy.
 func _read_input(delta: float) -> void:
 	var left := Input.is_action_pressed("left")
 	var right := Input.is_action_pressed("right")
-	# Xét phím nhảy TRƯỚC: thả A/D và bấm nhảy cùng lúc vẫn nhảy theo hướng đang nghiêng.
 	if Input.is_action_just_pressed("jump"):
 		if charge_dir != 0:
-			jump(charge_dir, charge)                          # nhảy theo hướng đang nghiêng
+			jump(charge_dir, charge)
 		else:
-			jump(0, straight_jump)                            # không giữ A/D: nhảy thẳng lên
+			jump(0, straight_jump)
 		charge_dir = 0
 		charge = 0.0
 		return
@@ -146,36 +145,33 @@ func _read_input(delta: float) -> void:
 	if charge_dir != 0:
 		var holding := left if charge_dir < 0 else right
 		if holding:
-			charge = minf(1.0, charge + delta / charge_time)    # giữ càng lâu càng mạnh
+			charge = minf(1.0, charge + delta / charge_time)
 		else:
-			charge_dir = 0                                    # thả A/D mà chưa nhảy: hủy, đứng thẳng lại
+			charge_dir = 0
 			charge = 0.0
 
 
-## Yêu cầu một cú nhảy theo hướng `dir` (-1 trái, 1 phải, 0 thẳng lên) với độ mạnh `amount` (0..1).
-## Nhảy ngay nếu đang chạm đất, không thì chờ tối đa release_buffer giây.
 func jump(dir: int, amount: float) -> void:
 	_jump_request = {"dir": dir, "charge": clampf(amount, 0.0, 1.0), "time": release_buffer}
 
 
-## Hướng và vận tốc của cú nhảy với độ mạnh `amount`.
 func jump_velocity(dir: int, amount: float) -> Vector2:
 	var speed := lerpf(min_speed, max_speed, amount)
+	if boost_time > 0.0:
+		speed *= boost_power
 	if dir == 0:
-		return Vector2(0, -speed)                             # nhảy thẳng lên
+		return Vector2(0, -speed)
 	var angle := deg_to_rad(lerpf(min_tilt_deg, max_tilt_deg, amount))
 	return Vector2(sin(angle) * dir, -cos(angle)) * speed
 
 
-## Godot gọi trong lúc tính vật lý. Mọi thay đổi vận tốc làm ở đây để không đánh nhau với vật lý.
 func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
-	if _teleport_to != null:                         # dịch tới chỗ hồi sinh, đứng yên
+	if _teleport_to != null:
 		state.transform = Transform2D(0.0, _teleport_to)
 		state.linear_velocity = Vector2.ZERO
 		_teleport_to = null
 		return
 
-	# 1. Chạm đất? Xét các điểm tiếp xúc có pháp tuyến hướng lên trên.
 	on_ground = false
 	for i in state.get_contact_count():
 		if state.get_contact_local_normal(i).y < -0.6:
@@ -183,23 +179,21 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 	if on_ground:
 		_coyote = coyote_time
 		if not _was_on_ground:
-			_tilt_vel += state.linear_velocity.x * 0.02   # chạm đất: thân lắc theo đà ngang
+			_tilt_vel += state.linear_velocity.x * 0.02
 			if _last_vy > 40.0:
-				landed.emit(_last_vy)                    # báo chạm đất (kèm tốc độ rơi)
+				landed.emit(_last_vy)
 	_was_on_ground = on_ground
 	_last_vy = state.linear_velocity.y
 	if dead:
 		return
 
-	# 2. Nhảy nếu có yêu cầu và đang (hoặc vừa) chạm đất.
 	if not _jump_request.is_empty() and _coyote > 0.0:
 		state.linear_velocity = jump_velocity(_jump_request["dir"], _jump_request["charge"])
-		_tilt_vel += _jump_request["dir"] * -4.0       # bật thẳng người lên khi nhảy
+		_tilt_vel += _jump_request["dir"] * -4.0
 		_jump_request = {}
 		_coyote = 0.0
 		launched.emit()
 
-	# 3. Bật lên do dẫm quái hoặc lò xo. Đang giữ A/D thì bật chéo theo hướng đó (để không kẹt nảy thẳng mãi).
 	if _bounce > 0.0:
 		state.linear_velocity.y = -_bounce
 		if charge_dir != 0:
@@ -208,7 +202,6 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		_coyote = 0.0
 
 
-## Lắc lư kiểu lật đật: lúc giữ phím thì nghiêng theo lực, thả ra thì lò xo kéo về thẳng.
 func _update_wobble(delta: float) -> void:
 	if charge_dir != 0 and not dead:
 		var target := charge_dir * deg_to_rad(lerpf(min_tilt_deg, max_tilt_deg, charge))
@@ -219,7 +212,6 @@ func _update_wobble(delta: float) -> void:
 	tilt += _tilt_vel * delta
 
 
-## Dịch tới `pos` (dùng khi hồi sinh).
 func teleport(pos: Vector2) -> void:
 	_teleport_to = pos
 	charge_dir = 0
@@ -227,13 +219,10 @@ func teleport(pos: Vector2) -> void:
 	_jump_request = {}
 
 
-## Bật lên với vận tốc `speed` (quái gọi khi bị dẫm, lò xo gọi khi chạm).
 func bounce_up(speed: float) -> void:
 	_bounce = speed
 
 
-## Bị thương. Đồ vật nguy hiểm gọi hàm này; play.gd quyết định trừ mạng, hồi sinh.
-## Có khiên thì khiên vỡ thay (không mất mạng); vừa bị đánh thì được miễn sát thương một lúc.
 func take_hit() -> void:
 	if dead or invuln > 0.0:
 		return
@@ -245,39 +234,40 @@ func take_hit() -> void:
 	hurt.emit()
 
 
-## Vẽ: thân lật đật (nếu bật show_placeholder) và mũi tên lực nhảy khi đang giữ phím (luôn vẽ).
 func _draw() -> void:
-	var base := Vector2(0, radius)                   # lật đật nghiêng quanh điểm chạm đất
+	var base := Vector2(0, radius)
 	draw_set_transform(base, tilt)
 	if show_placeholder:
-		# Theo mẫu của nhóm: trái banh đỏ sẫm có chấm sáng, ngồi trên đế vàng nửa vòng tròn.
-		var base_color := Color("#e3a72a")             # đế vàng
-		var ball_color := Color("#8e1418")             # banh đỏ sẫm
-		var base_center := Vector2(0, -radius + 1)     # tâm của nửa vòng tròn đế
+		var base_color := Color("#e3a72a")
+		var ball_color := Color("#8e1418")
+		var base_center := Vector2(0, -radius + 1)
 		var cup := PackedVector2Array()
-		for i in 17:                                   # nửa vòng tròn phía dưới (đáy chạm đất)
+		for i in 17:
 			var a := PI * i / 16.0
 			cup.append(base_center + Vector2(cos(a), sin(a)) * (radius - 1))
 		draw_colored_polygon(cup, base_color)
 		draw_polyline(cup + PackedVector2Array([cup[0]]), base_color.darkened(0.4), 1.5)
-		var ball_center := Vector2(0, -radius - 4)     # banh nằm trên đế
+		var ball_center := Vector2(0, -radius - 4)
 		var ball_r := radius * 0.7
 		draw_circle(ball_center, ball_r, ball_color)
-		draw_arc(ball_center, ball_r - 1.5, PI * 0.9, PI * 1.6, 10, ball_color.lightened(0.25), 2.0)   # viền sáng phía trên trái
+		draw_arc(ball_center, ball_r - 1.5, PI * 0.9, PI * 1.6, 10, ball_color.lightened(0.25), 2.0)
 		draw_arc(ball_center, ball_r, 0.0, TAU, 24, ball_color.darkened(0.5), 1.0)
-		draw_circle(ball_center + Vector2(-ball_r * 0.35, -ball_r * 0.4), 2.0, Color.WHITE)   # chấm sáng
+		draw_circle(ball_center + Vector2(-ball_r * 0.35, -ball_r * 0.4), 2.0, Color.WHITE)
 	draw_set_transform(Vector2.ZERO)
-	if has_shield and not dead:                      # khiên: vòng tròn pixel xanh ngọc bao quanh nhân vật
+	if boost_time > 0.0 and not dead:
+		var a := 0.5 + 0.5 * sin(_time * 10.0)
+		draw_texture_rect(JUMP_BOOST_TEXTURE, Rect2(Vector2(-12, radius - 8), Vector2(24, 24)), false, Color(1, 1, 1, a))
+	if has_shield and not dead:
 		var center := Vector2(0, -17)
 		for i in 28:
 			var a := TAU * i / 28.0 + _time * 0.8
 			var p := center + Vector2(cos(a), sin(a)) * 38.0
 			var col := Color("#7fd6e0") if i % 2 == 0 else Color("#3c8ea0")
 			draw_rect(Rect2(p.snapped(Vector2(2, 2)) - Vector2(2, 2), Vector2(4, 4)), Color(col, 0.75))
-	if charge_dir != 0 and not dead:                 # mũi tên: hướng và độ mạnh cú nhảy
+	if charge_dir != 0 and not dead:
 		var v := jump_velocity(charge_dir, charge)
-		var start := v.normalized() * (radius + 4.0)                  # bắt đầu từ mép thân, không đè lên banh
-		var tip := v.normalized() * (radius + 14.0 + 30.0 * charge)   # càng giữ lâu mũi tên càng dài
+		var start := v.normalized() * (radius + 4.0)
+		var tip := v.normalized() * (radius + 14.0 + 30.0 * charge)
 		var col := Color(1, 1, 1, 0.85).lerp(Color("#ff5d5d"), charge)
 		draw_line(start, tip, col, 3.0)
 		var side := tip.normalized().orthogonal() * 5.0

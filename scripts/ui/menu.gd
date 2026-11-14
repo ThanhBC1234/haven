@@ -1,8 +1,8 @@
 extends Control
-## Menu chính: nền rừng đêm, dải đất rừng ở dưới có nhân vật đứng sẵn (bấm A/D để nghịch thử),
-## tiêu đề có biểu tượng xoay hai bên, các nút chọn màn (tự tạo từ LevelData), cách chơi, nút thoát.
 
 const BALL_SCENE := preload("res://scenes/ball.tscn")
+const LOGO := preload("res://assets/ui/logo.png")
+const LOGO_SIZE := Vector2(410, 150)
 
 @onready var title: Label = $Center/Box/Title
 @onready var level_grid: GridContainer = $Center/Box/LevelGrid
@@ -13,7 +13,6 @@ var _demo_ball: Ball
 var _demo_start := Vector2.ZERO
 var _howto: PanelContainer
 
-## Nội dung bảng HOW TO PLAY: [tiêu đề mục, các dòng]. Sửa chữ ở đây.
 const HOW_TO_PLAY := [
 	["MOVE & JUMP", [
 		"Hold A / D (or LEFT / RIGHT) to tilt and charge, then press SPACE / W / UP to jump.",
@@ -32,78 +31,77 @@ const HOW_TO_PLAY := [
 ]
 
 
-## Khi menu mở: áp giao diện, dựng dải đất trang trí, tạo nút cho từng màn.
 func _ready() -> void:
 	theme = UiTheme.make()
 	_build_ground()
-	$Center.offset_bottom = -110                       # đẩy khối nút lên trên, chừa chỗ cho dải đất
+	$Center.offset_bottom = -110
 
-	# Tiêu đề: chữ xanh rêu, viền tối, hai bên là biểu tượng xoay của bộ SHADOW.
-	title.add_theme_font_size_override("font_size", 76)
-	title.add_theme_color_override("font_color", UiTheme.ACCENT)
-	title.add_theme_color_override("font_outline_color", Color("#0b1a10"))
-	title.add_theme_constant_override("outline_size", 14)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 18)
+	title.hide()
+	var logo := TextureRect.new()
+	logo.texture = LOGO
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	logo.custom_minimum_size = LOGO_SIZE
+	logo.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	logo.pivot_offset = LOGO_SIZE / 2.0
 	var box := title.get_parent()
-	box.add_child(row)
-	box.move_child(row, title.get_index())
-	title.reparent(row)
-	var spin_l := SpinnerIcon.new()
-	spin_l.sheet = preload("res://assets/ui/spinner_2.png")
-	row.add_child(spin_l)
-	row.move_child(spin_l, 0)
-	var spin_r := SpinnerIcon.new()
-	spin_r.sheet = preload("res://assets/ui/spinner_2.png")
-	row.add_child(spin_r)
+	box.add_child(logo)
+	box.move_child(logo, title.get_index())
+	var tw := logo.create_tween().set_loops()
+	tw.tween_property(logo, "scale", Vector2(1.03, 1.03), 0.9).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(logo, "scale", Vector2.ONE, 0.9).set_trans(Tween.TRANS_SINE)
 
-	help.add_theme_font_size_override("font_size", 17)
+	help.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
 	help.add_theme_color_override("font_color", UiTheme.DIM)
-	var endless := Button.new()                       # nút chế độ vô tận, đứng đầu danh sách
+	var endless := Button.new()
 	endless.text = "ENDLESS RUN   best %d" % Game.best_score
 	endless.custom_minimum_size = Vector2(380, 60)
-	endless.add_theme_font_size_override("font_size", 24)
+
 	endless.pressed.connect(Game.start_endless)
 	level_grid.add_child(endless)
 	for i in LevelData.LEVELS.size():
 		var b := Button.new()
 		var stars: int = Game.best_stars.get(i, 0)
-		b.text = "%d. %s   %s" % [i + 1, LevelData.LEVELS[i]["name"], "★".repeat(stars)]   # hiện số sao tốt nhất
+		b.text = "%d. %s   %s" % [i + 1, LevelData.LEVELS[i]["name"], "★".repeat(stars)]
 		b.custom_minimum_size = Vector2(380, 56)
-		b.pressed.connect(Game.start_level.bind(i))    # bấm là vào màn i
+		b.pressed.connect(Game.start_level.bind(i))
 		level_grid.add_child(b)
-	var bank := Label.new()                            # tổng sao đã gom
+	var bank := Label.new()
 	bank.text = "★ %d stars collected" % Game.total_stars
 	bank.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bank.add_theme_color_override("font_color", Color("#f7d046"))
 	level_grid.get_parent().add_child(bank)
 	level_grid.get_parent().move_child(bank, level_grid.get_index() + 1)
-	var howto_button := Button.new()                   # nút mở bảng hướng dẫn
+	level_grid.columns = 2
+	level_grid.add_theme_constant_override("h_separation", 12)
+	var bottom_row := HBoxContainer.new()
+	bottom_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	bottom_row.add_theme_constant_override("separation", 12)
+	quit_button.get_parent().add_child(bottom_row)
+	quit_button.get_parent().move_child(bottom_row, quit_button.get_index())
+	var howto_button := Button.new()
 	howto_button.text = "HOW TO PLAY"
 	howto_button.custom_minimum_size = Vector2(240, 52)
-	howto_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	howto_button.pressed.connect(_show_howto)
-	quit_button.get_parent().add_child(howto_button)
-	quit_button.get_parent().move_child(howto_button, quit_button.get_index())
+	bottom_row.add_child(howto_button)
+	quit_button.reparent(bottom_row)
 	help.text = "Hold A / D to aim, SPACE to jump, F / J to shoot.  Open HOW TO PLAY for everything else."
 	quit_button.custom_minimum_size = Vector2(160, 52)
 	quit_button.pressed.connect(get_tree().quit)
-	level_grid.get_child(0).grab_focus()               # chọn sẵn màn 1, bấm Enter là chơi
+	level_grid.get_child(0).grab_focus()
 
 
-## Dải đất rừng ở đáy menu (dùng chính Level và bộ gạch), có nhân vật đứng chơi được.
 func _build_ground() -> void:
 	var rows := []
 	for r in 23:
 		rows.append(".".repeat(40))
-	rows[18] = ".".repeat(30) + "####" + ".".repeat(6)         # một mô đất nhỏ bên phải
+	rows[18] = ".".repeat(30) + "####" + ".".repeat(6)
 	rows[19] = "....O" + ".".repeat(25) + "####" + ".".repeat(6)
 	for r in range(20, 23):
 		rows[r] = "#".repeat(40)
 	var level := Level.new()
 	add_child(level)
-	move_child(level, 1)                                       # vẽ sau nền, trước các nút
+	move_child(level, 1)
 	level.build("\n".join(rows))
 	_demo_start = level.start_position
 	_demo_ball = BALL_SCENE.instantiate()
@@ -111,10 +109,10 @@ func _build_ground() -> void:
 	level.add_child(_demo_ball)
 
 
-## Bảng HOW TO PLAY: các mục hướng dẫn, nút Close (hoặc Esc) để đóng.
 func _show_howto() -> void:
 	if _howto:
 		return
+	$Center.hide()
 	_howto = PanelContainer.new()
 	_howto.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_howto.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -126,13 +124,13 @@ func _show_howto() -> void:
 	for section in HOW_TO_PLAY:
 		var head := Label.new()
 		head.text = section[0]
-		head.add_theme_font_size_override("font_size", 22)
+		head.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
 		head.add_theme_color_override("font_color", UiTheme.ACCENT)
 		box.add_child(head)
 		for line in section[1]:
 			var l := Label.new()
 			l.text = "  " + line
-			l.add_theme_font_size_override("font_size", 17)
+			l.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
 			box.add_child(l)
 	var close := Button.new()
 	close.text = "Close"
@@ -146,6 +144,7 @@ func _hide_howto() -> void:
 	if _howto:
 		_howto.queue_free()
 		_howto = null
+		$Center.show()
 		level_grid.get_child(0).grab_focus()
 
 
@@ -154,7 +153,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hide_howto()
 
 
-## Nhân vật nhảy ra khỏi màn hình thì đưa về chỗ cũ.
 func _physics_process(_delta: float) -> void:
 	if _demo_ball and (_demo_ball.global_position.x < -40 or _demo_ball.global_position.x > 1320 or _demo_ball.global_position.y > 800):
 		_demo_ball.teleport(_demo_start)

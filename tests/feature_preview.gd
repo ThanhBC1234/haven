@@ -1,6 +1,4 @@
 extends Node
-## Chụp ảnh trận boss, vật phẩm và các đoạn đường cong. Chạy có cửa sổ:
-##   godot --path . res://tests/feature_preview.tscn -- --shots=<thư mục>
 
 var dir := ""
 
@@ -10,7 +8,6 @@ func _ready() -> void:
 		if a.begins_with("--shots="):
 			dir = a.trim_prefix("--shots=")
 	Game.save_enabled = false
-	# Bảng HOW TO PLAY
 	var menu: Node = load("res://scenes/menu.tscn").instantiate()
 	add_child(menu)
 	await _frames(20)
@@ -19,13 +16,15 @@ func _ready() -> void:
 	await _shot("menu_howto")
 	menu.queue_free()
 	await _frames(2)
-	# Trận boss: lúc boss cảnh báo (dấu !) và lúc boss choáng
 	Game.level_index = LevelData.LEVELS.size() - 1
 	var play: Node = load("res://scenes/play.tscn").instantiate()
 	add_child(play)
 	await _frames(10)
 	play.ball.teleport(Vector2(400, play.level.start_position.y))
 	play.ball.add_ammo(15)
+	play.ball.give_shield()
+	play.ball.give_jump_boost()
+	play.level.heart_collected.emit()
 	await _frames(30)
 	await _shot("boss_appears")
 	var boss: Boss = null
@@ -44,10 +43,9 @@ func _ready() -> void:
 	await _shot("boss_dizzy_phase2")
 	play.queue_free()
 	await _frames(2)
-	# Vật phẩm cận cảnh
 	var lv := Level.new()
 	add_child(lv)
-	lv.build("#................#\n#................#\n#................#\n#..O..+..h..g..e.#\n##################")
+	lv.build("#................#\n#................#\n#................#\n#..O..+..h..g..j.#\n##################")
 	var cam := Camera2D.new()
 	cam.zoom = Vector2(2.2, 2.2)
 	add_child(cam)
@@ -60,7 +58,6 @@ func _ready() -> void:
 	await _shot("pickups")
 	lv.queue_free()
 	await _frames(2)
-	# Các đoạn đường cong
 	for seg in SegmentData.SEGMENTS:
 		if not seg["name"] in ["Rolling Hills", "Bumpy Road", "Valley Ride"]:
 			continue

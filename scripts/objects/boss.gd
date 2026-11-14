@@ -1,52 +1,42 @@
 class_name Boss
 extends Node2D
-## Boss "GLOOMFANG": quả cầu quái vật CHỈ LĂN TRÊN MẶT ĐẤT (không bay, không bắn).
-## Vòng hành động:
-##   1. LĂN qua lại chậm rãi, đụng tường / cổng thì quay đầu.
-##   2. CẢNH BÁO: dừng lại, rung lắc, hiện dấu "!" đỏ trên đầu (người chơi chuẩn bị nhảy).
-##   3. LAO NHANH về phía người chơi cho tới khi đâm tường.
-##   4. CHOÁNG: đứng yên, sao quay trên đầu. Đây là lúc dễ đánh nhất.
-## Cách đánh: bắn (F / J) - boss ở ngang mặt đất nên bắn ngang là trúng; hoặc nhảy dẫm lên đầu (trừ 1 máu, bật lên).
-## Chạm vào thân boss (không phải từ trên xuống) thì người chơi bị thương.
-## Còn nửa máu thì sang giai đoạn 2: đỏ lên, lăn và lao nhanh hơn, lao thường hơn.
-## Hết máu: nổ, báo Level mở cổng G. Đổi hình: thêm Sprite2D vào scenes/objects/boss.tscn, tắt show_placeholder.
 
 signal hp_changed(hp: int, max_hp: int)
 signal died
 
 enum State { SLEEP, ROLL, WARN, CHARGE, DIZZY }
 
-@export var boss_name := "GLOOMFANG"
-@export var max_hp := 12                     # số máu (mỗi phát bắn hoặc mỗi lần dẫm trừ 1)
-@export var wake_distance := 600.0           # người chơi cách bao xa (theo chiều ngang) thì boss tỉnh
-@export var roam := 448.0                    # chỉ lăn trong khoảng này quanh chỗ đặt (14 ô mỗi bên), như có tường vô hình
+@export var boss_name := "MAX VERSTAPPEN"
+@export var max_hp := 24
+@export var wake_distance := 800.0
+@export var roam := 448.0
 
 @export_group("Lăn và lao")
-@export var roll_speed := 70.0               # tốc độ lăn bình thường (pixel/giây)
-@export var phase2_roll_speed := 110.0
-@export var charge_speed := 240.0            # tốc độ lao
+@export var roll_speed := 100.0
+@export var phase2_roll_speed := 150.0
+@export var charge_speed := 240.0
 @export var phase2_charge_speed := 300.0
-@export var charge_every := 4.5              # lăn bao lâu thì lao một lần
+@export var charge_every := 5.0
 @export var phase2_charge_every := 3.2
-@export var warn_time := 1.0                 # rung lắc cảnh báo bao lâu trước khi lao
-@export var dizzy_time := 2.0                # choáng bao lâu sau khi đâm tường
+@export var warn_time := 0.5
+@export var dizzy_time := 1.0
 
 @export_group("Dẫm và hình")
-@export var stomp_bounce := 620.0            # dẫm lên đầu boss thì người chơi bật lên với vận tốc này
-@export var radius := 30.0                   # bán kính thân (khớp hình 16 x 16 điểm x 4 = 64 pixel)
+@export var stomp_bounce := 620.0
+@export var radius := 30.0
 @export var pixel_size := 4.0
 @export var show_placeholder := true
 
 var hp := 0
 var dead := false
 var state := State.SLEEP
-var dir := -1                                # -1 lăn sang trái, 1 lăn sang phải
+var dir := -1
 var _timer := 0.0
-var _spin := 0.0                             # góc xoay khi lăn (để vẽ)
-var _flash := 0.0                            # nháy trắng khi mất máu
+var _spin := 0.0
+var _flash := 0.0
 var _t := 0.0
-var _home_x := 0.0                           # chỗ đặt ban đầu (tâm vùng lăn)
-var _snapped := false                        # đã đặt sát mặt đất chưa (làm ở khung vật lý đầu tiên)
+var _home_x := 0.0
+var _snapped := false
 
 @onready var hurtbox: Area2D = $Hurtbox
 
@@ -57,7 +47,6 @@ func _ready() -> void:
 	hurtbox.body_entered.connect(_on_touch)
 
 
-## Đặt boss nằm sát mặt đất ngay bên dưới chỗ đặt.
 func _snap_to_ground() -> void:
 	var from := global_position
 	var query := PhysicsRayQueryParameters2D.create(from, from + Vector2(0, 600), 1)
@@ -75,7 +64,7 @@ func _physics_process(delta: float) -> void:
 		return
 	if not _snapped:
 		_snapped = true
-		_snap_to_ground()                            # khung đầu: đất đã có trong thế giới vật lý
+		_snap_to_ground()
 	_t += delta
 	_flash = maxf(0.0, _flash - delta)
 	var ball := get_tree().get_first_node_in_group("ball") as Ball
@@ -87,7 +76,7 @@ func _physics_process(delta: float) -> void:
 			_roll(phase2_roll_speed if is_phase2() else roll_speed, delta)
 			_timer -= delta
 			if _timer <= 0.0 and ball and not ball.dead:
-				state = State.WARN                       # chuẩn bị lao: dừng lại rung lắc
+				state = State.WARN
 				_timer = warn_time
 				dir = 1 if ball.global_position.x > global_position.x else -1
 		State.WARN:
@@ -96,7 +85,7 @@ func _physics_process(delta: float) -> void:
 				state = State.CHARGE
 		State.CHARGE:
 			if _roll(phase2_charge_speed if is_phase2() else charge_speed, delta):
-				state = State.DIZZY                      # đâm tường: choáng
+				state = State.DIZZY
 				_timer = dizzy_time
 		State.DIZZY:
 			_timer -= delta
@@ -106,17 +95,16 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 
-## Lăn một đoạn theo hướng `dir`. Gặp tường / cổng phía trước thì quay đầu và trả về true.
 func _roll(speed: float, delta: float) -> bool:
 	var step := speed * delta
 	var from := global_position
 	var query := PhysicsRayQueryParameters2D.create(from, from + Vector2(dir * (radius + step + 2.0), 0), 1)
-	var out_of_area := absf(position.x + dir * step - _home_x) > roam   # ra khỏi vùng lăn: coi như đụng tường
+	var out_of_area := absf(position.x + dir * step - _home_x) > roam
 	if out_of_area or not get_world_2d().direct_space_state.intersect_ray(query).is_empty():
 		dir = -dir
 		return true
 	position.x += dir * step
-	_spin += dir * step / radius                     # quay theo quãng đường lăn
+	_spin += dir * step / radius
 	return false
 
 
@@ -129,7 +117,6 @@ func _wake() -> void:
 	hp_changed.emit(hp, max_hp)
 
 
-## Mất máu (đạn của người chơi, hoặc bị dẫm).
 func take_damage(amount: int) -> void:
 	if dead:
 		return
@@ -150,7 +137,7 @@ func _die() -> void:
 	var level := Level.of(self)
 	if level:
 		level.defeat_boss(self)
-	var p := CPUParticles2D.new()                     # nổ thành mảnh pixel
+	var p := CPUParticles2D.new()
 	p.one_shot = true
 	p.amount = 40
 	p.lifetime = 1.0
@@ -171,7 +158,6 @@ func _die() -> void:
 	tw.tween_callback(queue_free)
 
 
-## Người chơi chạm vào boss: từ trên rơi xuống thì dẫm trúng đầu (boss mất máu), còn lại người chơi bị thương.
 func _on_touch(body: Node2D) -> void:
 	if dead or not body is Ball or body.dead:
 		return
@@ -188,14 +174,14 @@ func _draw() -> void:
 		return
 	var tint := Color(1.0, 0.65, 0.65) if is_phase2() else Color.WHITE
 	if _flash > 0.0:
-		tint = Color(3, 3, 3)                        # nháy trắng khi mất máu
+		tint = Color(3, 3, 3)
 	var shake := Vector2(sin(_t * 70.0) * 2.0, 0) if state == State.WARN else Vector2.ZERO
 	draw_set_transform(shake, _spin)
 	PixelArt.draw_centered(self, PixelArt.BOSS, Vector2.ZERO, pixel_size, tint)
 	draw_set_transform(Vector2.ZERO)
-	if state == State.WARN:                           # dấu ! đỏ: sắp lao
+	if state == State.WARN:
 		PixelArt.draw_centered(self, PixelArt.EXCLAIM, Vector2(0, -radius - 26), 4.0)
-	elif state == State.DIZZY:                        # sao vàng quay: đang choáng
+	elif state == State.DIZZY:
 		for i in 3:
 			var a := _t * 5.0 + i * TAU / 3.0
 			var p := Vector2(cos(a) * 22.0, -radius - 10 + sin(a) * 6.0)

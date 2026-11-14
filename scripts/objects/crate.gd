@@ -1,28 +1,23 @@
 class_name Crate
 extends RigidBody2D
-## Thùng gỗ: bóng đẩy được, đứng lên được, đặt lên nút để giữ cửa mở.
-## Khối lượng và ma sát chỉnh ở Inspector (Mass, Physics Material Override).
 
 @export var show_placeholder := true
 
-const SIZE := 30.0     # nhỏ hơn 1 ô (32) một chút để lọt khe vừa 1 ô
+const SIZE := 30.0
 
-var home := Vector2.ZERO      # vị trí ban đầu, để đặt lại khi người chơi hồi sinh
+var home := Vector2.ZERO
 var _reset_pending := false
 
 
-## Nhớ vị trí ban đầu.
 func _ready() -> void:
 	add_to_group("crates")
 	home = global_position
 
 
-## Đưa thùng về chỗ cũ (Level gọi khi bóng hồi sinh, để không bị kẹt vì đẩy thùng sai chỗ).
 func reset() -> void:
 	_reset_pending = true
 
 
-## Godot gọi trong lúc tính vật lý: dịch thùng về chỗ cũ ở đây cho an toàn.
 func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 	if _reset_pending:
 		state.transform = Transform2D(0.0, home)
@@ -31,7 +26,6 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		_reset_pending = false
 
 
-## Hình tạm: thùng gỗ có chữ X.
 func _draw() -> void:
 	if not show_placeholder:
 		return

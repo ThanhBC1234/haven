@@ -1,13 +1,7 @@
 extends Node2D
-## Nền rừng đêm, hợp tông với bộ gạch Dark Fantasia Forest:
-## trời tối chuyển màu, 3 lớp rừng cây thông (xa mờ, gần đậm) trôi chậm hơn camera (parallax),
-## sương mù và đom đóm lấp lánh. Vẽ hoàn toàn bằng code.
-## Nằm trong CanvasLayer có layer = -1 nên luôn ở sau màn chơi.
-## Muốn dùng ảnh nền PNG: thêm Parallax2D + Sprite2D vào play.tscn và xóa node này.
 
-const SKY_TOP := Color("#0b0e18")        # trời trên cùng
-const SKY_BOTTOM := Color("#1d3140")     # trời sát chân trời
-## Mỗi lớp rừng: [tốc độ trôi so với camera, độ cao chân rừng (tỉ lệ màn hình), chiều cao cây, khoảng cách cây, màu]
+const SKY_TOP := Color("#0b0e18")
+const SKY_BOTTOM := Color("#1d3140")
 const LAYERS := [
 	[0.10, 0.62, 120.0, 46.0, Color("#16242f")],
 	[0.25, 0.74, 150.0, 58.0, Color("#111b24")],
@@ -20,28 +14,26 @@ var _time := 0.0
 
 func _process(delta: float) -> void:
 	_time += delta
-	queue_redraw()                         # vẽ lại mỗi khung để rừng trôi theo camera, đom đóm nhấp nháy
+	queue_redraw()
 
 
 func _draw() -> void:
 	var view := get_viewport_rect().size
 	var cam := get_viewport().get_camera_2d()
-	var cam_x := cam.get_screen_center_position().x if cam else _time * 20.0   # menu không có camera: tự trôi chậm
+	var cam_x := cam.get_screen_center_position().x if cam else _time * 20.0
 	draw_polygon(PackedVector2Array([Vector2.ZERO, Vector2(view.x, 0), view, Vector2(0, view.y)]),
 		PackedColorArray([SKY_TOP, SKY_TOP, SKY_BOTTOM, SKY_BOTTOM]))
 	var moon := Vector2(view.x * 0.9, view.y * 0.2)
-	draw_circle(moon, 40.0, Color("#d9e6c8", 0.08))       # quầng trăng
-	draw_circle(moon, 24.0, Color("#e9f2dc", 0.8))        # trăng
+	draw_circle(moon, 40.0, Color("#d9e6c8", 0.08))
+	draw_circle(moon, 24.0, Color("#e9f2dc", 0.8))
 	for i in LAYERS.size():
 		var l: Array = LAYERS[i]
 		_forest(view, cam_x * l[0], view.y * l[1], l[2], l[3], l[4], i)
-		# sương mù mỏng giữa các lớp rừng
 		var mist_y: float = view.y * l[1] - 10.0
 		draw_rect(Rect2(0, mist_y, view.x, 40), Color("#5d7a86", 0.05))
 	_fireflies(view, cam_x)
 
 
-## Một dãy cây thông hình tam giác chồng tầng, chân rừng ở `base_y`.
 func _forest(view: Vector2, offset: float, base_y: float, tree_h: float, gap: float, color: Color, seed_: int) -> void:
 	draw_rect(Rect2(0, base_y, view.x, view.y - base_y), color)
 	var first := floori(offset / gap) - 1
@@ -49,15 +41,14 @@ func _forest(view: Vector2, offset: float, base_y: float, tree_h: float, gap: fl
 	for k in count:
 		var i := first + k
 		var x := i * gap - offset
-		var h := tree_h * (0.7 + 0.3 * absf(sin(i * 12.9898 + seed_ * 3.1)))   # cây cao thấp khác nhau
+		var h := tree_h * (0.7 + 0.3 * absf(sin(i * 12.9898 + seed_ * 3.1)))
 		var w := h * 0.42
-		for tier in 3:                                                        # 3 tầng lá
+		for tier in 3:
 			var top := base_y - h + tier * h * 0.22
 			var half := w * (0.55 + tier * 0.22)
 			draw_colored_polygon(PackedVector2Array([Vector2(x, top), Vector2(x - half, top + h * 0.42), Vector2(x + half, top + h * 0.42)]), color)
 
 
-## Đom đóm: chấm sáng nhỏ trôi lơ lửng, nhấp nháy.
 func _fireflies(view: Vector2, cam_x: float) -> void:
 	for i in 26:
 		var fx := fposmod(i * 197.0 - cam_x * 0.6 + sin(_time * 0.7 + i) * 30.0, view.x)

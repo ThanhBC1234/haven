@@ -1,24 +1,21 @@
 class_name Pickup
 extends Area2D
-## Một script dùng chung cho các vật chỉ cần "bóng chạm vào là có tác dụng":
-##   star       - ngôi sao, nhặt để tính điểm (mỗi màn 3 sao)
-##   checkpoint - cờ lưu: chết thì hồi sinh ở đây
-##   finish     - đích: chạm là qua màn
-##   trampoline - lò xo: bật bóng lên rất cao
-##   heart      - trái tim: +1 mạng (tối đa bằng số mạng ban đầu)
-##   shield     - khiên: đỡ 1 đòn
-##   gun        - súng: + đạn; mọc lại sau `respawn_time` giây (để đấu boss không bao giờ hết đạn)
-## Chọn loại ở biến `kind`. Gốc tọa độ ở giữa đáy ô.
 
-@export_enum("star", "checkpoint", "finish", "trampoline", "heart", "shield", "gun") var kind := "star"
-@export var trampoline_speed := 920.0   # lò xo bật lên với vận tốc này (khoảng 9 ô)
-@export var gun_ammo := 15              # nhặt súng được bao nhiêu viên đạn
-@export var respawn_time := 8.0         # súng mọc lại sau bao nhiêu giây
+@export_enum("star", "checkpoint", "finish", "trampoline", "heart", "shield", "gun", "jump_boost") var kind := "star"
+@export var trampoline_speed := 920.0
+@export var gun_ammo := 15
+@export var respawn_time := 8.0
 @export var show_placeholder := true
 
-var used := false       # cờ đã cắm / sao đã nhặt
-var _time := 0.0        # cho hiệu ứng lắc lư
-var _squash := 0.0      # lò xo nén xuống khi vừa bật
+const ITEM_TEXTURES := {
+	"heart": preload("res://assets/items/heart.png"),
+	"shield": preload("res://assets/items/shield.png"),
+	"jump_boost": preload("res://assets/items/jump_boost.png"),
+}
+
+var used := false
+var _time := 0.0
+var _squash := 0.0
 
 
 func _ready() -> void:
@@ -32,7 +29,6 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
-## Bóng chạm vào: làm việc tương ứng với loại vật.
 func _on_body_entered(body: Node2D) -> void:
 	if not body is Ball or body.dead:
 		return
@@ -69,19 +65,24 @@ func _on_body_entered(body: Node2D) -> void:
 			used = true
 			body.give_shield()
 			queue_free()
+		"jump_boost":
+			if used:
+				return
+			used = true
+			body.give_jump_boost()
+			queue_free()
 		"gun":
 			if used:
 				return
 			used = true
 			body.add_ammo(gun_ammo)
-			hide()                                     # ẩn đi rồi mọc lại sau respawn_time giây
+			hide()
 			await get_tree().create_timer(respawn_time).timeout
 			if is_inside_tree():
 				used = false
 				show()
 
 
-## Hình tạm cho từng loại.
 func _draw() -> void:
 	if not show_placeholder:
 		return
@@ -108,9 +109,11 @@ func _draw() -> void:
 			for x in [-10.0, 0.0, 10.0]:
 				draw_line(Vector2(x, -4), Vector2(x, -h), Color("#aab2c5"), 2.0)
 			draw_rect(Rect2(-15, -h - 4, 30, 4), Color("#ff6b6b"))
-		"heart", "shield", "gun":                       # hình pixel nhấp nhô, có quầng sáng
+		"heart", "shield", "gun", "jump_boost":
 			var c := Vector2(0, -16 + sin(_time * 3.0) * 3.0)
-			var glow: Color = {"heart": Color("#e8455a"), "shield": Color("#7fd6e0"), "gun": Color("#f7d046")}[kind]
-			draw_circle(c, 15.0, Color(glow, 0.18 + 0.08 * sin(_time * 5.0)))
-			var art: Array = {"heart": PixelArt.HEART, "shield": PixelArt.SHIELD, "gun": PixelArt.GUN}[kind]
-			PixelArt.draw_centered(self, art, c, 3.0)
+			var glow: Color = {"heart": Color("#e8455a"), "shield": Color("#00a2e8"), "gun": Color("#f7d046"), "jump_boost": Color("#22b14c")}[kind]
+			draw_circle(c, 17.0, Color(glow, 0.18 + 0.08 * sin(_time * 5.0)))
+			if ITEM_TEXTURES.has(kind):
+				draw_texture_rect(ITEM_TEXTURES[kind], Rect2(c - Vector2(16, 16), Vector2(32, 32)), false)
+			else:
+				PixelArt.draw_centered(self, PixelArt.GUN, c, 3.0)

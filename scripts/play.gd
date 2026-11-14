@@ -1,10 +1,9 @@
 extends Node2D
-## Cảnh chơi một màn: dựng màn, thả bóng, camera đi theo, tính mạng, sao, hồi sinh, qua màn.
 
 const BALL_SCENE := preload("res://scenes/ball.tscn")
-const LIVES := 3                    # số mạng mỗi lần vào màn
-const RESPAWN_DELAY := 0.8          # chết rồi chờ bao lâu mới hồi sinh
-const FALL_MARGIN := 160.0          # rơi thấp hơn đáy màn bao nhiêu pixel thì tính là chết
+const LIVES := 3
+const RESPAWN_DELAY := 0.8
+const FALL_MARGIN := 160.0
 
 @onready var camera: Camera2D = $Camera
 @onready var hud: Hud = $HUD/Hud
@@ -13,16 +12,15 @@ var level: Level
 var ball: Ball
 var lives := LIVES
 var stars := 0
-var respawn_position := Vector2.ZERO   # cờ lưu gần nhất (lúc đầu là chỗ xuất phát)
-var _busy := false                      # đang chết / đã qua màn: bỏ qua sự kiện khác
+var respawn_position := Vector2.ZERO
+var _busy := false
 
 
-## Dựng màn theo Game.level_index và nối các tín hiệu.
 func _ready() -> void:
 	var data: Dictionary = LevelData.LEVELS[Game.level_index]
 	level = Level.new()
 	add_child(level)
-	move_child(level, 0)                          # vẽ màn dưới camera và giao diện
+	move_child(level, 0)
 	level.build(data["map"])
 
 	ball = BALL_SCENE.instantiate()
@@ -35,8 +33,8 @@ func _ready() -> void:
 	level.checkpoint_reached.connect(func(pos: Vector2) -> void: respawn_position = pos)
 	level.finished.connect(_on_finished)
 
-	camera.limit_left = 0                         # camera không đi ra ngoài màn
-	camera.limit_top = mini(-int(TILE_MARGIN), int(level.size.y) - 720)   # màn thấp hơn màn hình: canh đáy màn sát đáy màn hình
+	camera.limit_left = 0
+	camera.limit_top = mini(-int(TILE_MARGIN), int(level.size.y) - 720)
 	camera.limit_right = int(level.size.x)
 	camera.limit_bottom = int(level.size.y)
 	camera.global_position = ball.global_position
@@ -46,26 +44,24 @@ func _ready() -> void:
 	hud.next_pressed.connect(_on_next)
 	hud.retry_pressed.connect(func() -> void: Game.start_level(Game.level_index))
 	hud.menu_pressed.connect(Game.go_to_menu)
-	hud.watch_ball(ball)                          # HUD hiện số đạn, khiên
-	hud.watch_level(level)                        # HUD hiện thanh máu boss
+	hud.watch_ball(ball)
+	hud.watch_level(level)
 	level.heart_collected.connect(_on_heart)
 
-const TILE_MARGIN := 64.0   # cho camera nhìn cao hơn đỉnh màn một chút
+const TILE_MARGIN := 64.0
 
 
-## 60 lần mỗi giây: camera theo bóng, kiểm tra rơi vực, phím tắt.
 func _physics_process(_delta: float) -> void:
 	if not ball.dead:
-		camera.global_position = ball.global_position + Vector2(ball.linear_velocity.x * 0.25, -40)  # nhìn trước theo hướng lăn
+		camera.global_position = ball.global_position + Vector2(ball.linear_velocity.x * 0.25, -40)
 		if ball.global_position.y > level.size.y + FALL_MARGIN:
 			_on_ball_hurt()
 	if Input.is_action_just_pressed("restart") and not _busy:
-		_on_ball_hurt()                           # R: tự nổ, về cờ lưu (mất 1 mạng), thùng về chỗ cũ
+		_on_ball_hurt()
 	if Input.is_action_just_pressed("back"):
-		Game.go_to_menu()                         # Esc: về menu
+		Game.go_to_menu()
 
 
-## Bóng bị thương: trừ mạng, vỡ bóng, hồi sinh ở cờ lưu. Hết mạng thì chơi lại màn.
 func _on_ball_hurt() -> void:
 	if _busy:
 		return
@@ -75,7 +71,7 @@ func _on_ball_hurt() -> void:
 	_pop_effect(ball.global_position)
 	ball.dead = true
 	ball.hide()
-	ball.teleport(respawn_position)               # dịch bóng về cờ lưu (đang ẩn)
+	ball.teleport(respawn_position)
 	if lives <= 0:
 		hud.show_message("Out of lives! Restarting...")
 		await get_tree().create_timer(1.4).timeout
@@ -83,15 +79,14 @@ func _on_ball_hurt() -> void:
 		return
 	await get_tree().create_timer(RESPAWN_DELAY).timeout
 	ball.teleport(respawn_position)
-	level.reset_crates()                          # thùng về chỗ cũ để không bị kẹt
+	level.reset_crates()
 	camera.global_position = respawn_position
 	ball.dead = false
-	ball.invuln = 1.0                             # vừa hồi sinh: miễn sát thương 1 giây
+	ball.invuln = 1.0
 	ball.show()
 	_busy = false
 
 
-## Nhặt trái tim: +1 mạng, tối đa LIVES.
 func _on_heart() -> void:
 	lives = mini(LIVES, lives + 1)
 	hud.set_lives(lives)
@@ -102,7 +97,6 @@ func _on_star() -> void:
 	hud.set_stars(stars)
 
 
-## Chạm đích: dừng bóng, ghi sao, hiện bảng qua màn.
 func _on_finished() -> void:
 	if _busy:
 		return
@@ -115,10 +109,9 @@ func _on_finished() -> void:
 
 func _on_next() -> void:
 	if not Game.next_level():
-		Game.go_to_menu()                         # màn cuối: về menu
+		Game.go_to_menu()
 
 
-## Hiệu ứng bóng vỡ thành mảnh.
 func _pop_effect(pos: Vector2) -> void:
 	var p := CPUParticles2D.new()
 	p.one_shot = true

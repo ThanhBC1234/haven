@@ -1,7 +1,5 @@
 class_name Door
 extends StaticBody2D
-## Cửa chắn đường. Mở khi nút cùng kênh đang bị đè, đóng lại khi thả nút.
-## Gốc tọa độ ở góc trên bên trái. Cao bao nhiêu ô do bản đồ chữ quyết định.
 
 @export var channel := "a"
 @export var height_tiles := 3
@@ -12,7 +10,6 @@ const TILE := 32.0
 var is_open := false
 
 
-## Tạo hình va chạm theo chiều cao, nghe tín hiệu nút từ Level.
 func _ready() -> void:
 	var shape := RectangleShape2D.new()
 	shape.size = Vector2(TILE, height_tiles * TILE)
@@ -27,11 +24,10 @@ func _on_channel_changed(ch: String, on: bool) -> void:
 	if ch != channel:
 		return
 	is_open = on
-	$Shape.set_deferred("disabled", on)    # mở cửa = tắt va chạm
+	$Shape.set_deferred("disabled", on)
 	queue_redraw()
 
 
-## Hình tạm: cửa song sắt màu theo kênh, mở thì mờ đi.
 func _draw() -> void:
 	if not show_placeholder:
 		return

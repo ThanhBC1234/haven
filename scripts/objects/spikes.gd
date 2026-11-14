@@ -1,12 +1,9 @@
 class_name Spikes
 extends Area2D
-## Một ô gai. Bóng chạm vào là bị thương. Gốc tọa độ ở giữa đáy ô.
-## Trong bản đồ chữ: ^ là gai mọc từ đất, v là gai treo trên trần (xoay 180 độ).
 
 @export var show_placeholder := true
 
 
-## Nối tín hiệu: có vật thể chạm vào vùng gai.
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 
@@ -16,7 +13,6 @@ func _on_body_entered(body: Node2D) -> void:
 		body.take_hit()
 
 
-## Hình tạm: 2 chiếc gai trong một ô.
 func _draw() -> void:
 	if not show_placeholder:
 		return

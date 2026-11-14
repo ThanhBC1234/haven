@@ -1,28 +1,39 @@
 class_name UiTheme
-## Giao diện dùng chung (menu, HUD, bảng qua màn), theo bộ khung SHADOW Series (assets/ui/).
-## Khung viền được cắt kiểu "9 phần" (StyleBoxTexture): 4 góc giữ nguyên, các cạnh và giữa co giãn theo nút.
-## Đổi màu chữ, font ở các hằng số dưới; đổi khung bằng cách sửa đường dẫn FRAME_*.
 
-const TEXT := Color("#d8f3ef")          # chữ thường (trắng ngả xanh)
-const ACCENT := Color("#a3e05a")        # màu nhấn: xanh rêu như cỏ trong bộ gạch
-const CYAN := Color("#8ac6c8")          # màu viền khung SHADOW
-const DIM := Color("#7d9aa0")           # chữ phụ
+const TEXT := Color("#d8f3ef")
+const ACCENT := Color("#a3e05a")
+const CYAN := Color("#8ac6c8")
+const DIM := Color("#7d9aa0")
 
-const FRAME_NORMAL := "res://assets/ui/frame_4.png"    # nút bình thường
-const FRAME_HOVER := "res://assets/ui/frame_1.png"     # nút khi rê chuột / đang chọn
-const FRAME_PRESSED := "res://assets/ui/frame_3.png"   # nút khi bấm
-const FRAME_PANEL := "res://assets/ui/frame_2.png"     # bảng (bảng qua màn, ô HUD)
-const FRAME_MARGIN := 24.0                             # độ dày phần góc/viền không bị co giãn (pixel)
+const FRAME_NORMAL := "res://assets/ui/frame_4.png"
+const FRAME_HOVER := "res://assets/ui/frame_1.png"
+const FRAME_PRESSED := "res://assets/ui/frame_3.png"
+const FRAME_PANEL := "res://assets/ui/frame_2.png"
+const FRAME_MARGIN := 24.0
+
+const FONT_PATH := "res://assets/fonts/PeaberryBase.ttf"
+const FONT_SMALL := 16
+const FONT_MEDIUM := 32
+const FONT_LARGE := 48
 
 
-## Tạo bộ giao diện.
+static func main_font() -> FontFile:
+	var f: FontFile = load(FONT_PATH)
+	f.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	f.hinting = TextServer.HINTING_NONE
+	f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	if f.fallbacks.is_empty():
+		var sys := SystemFont.new()
+		sys.font_names = PackedStringArray(["Segoe UI Symbol", "Segoe UI", "Arial"])
+		f.fallbacks = [sys]
+	return f
+
+
 static func make() -> Theme:
 	var t := Theme.new()
-	var font := SystemFont.new()
-	font.font_names = PackedStringArray(["Bahnschrift", "Segoe UI", "Arial", "Noto Sans"])   # font gọn, hợp kiểu công nghệ
-	font.font_weight = 600
-	t.default_font = font
-	t.default_font_size = 20
+	t.default_font = main_font()
+	t.default_font_size = FONT_SMALL
+	t.set_font_size("font_size", "Button", FONT_MEDIUM)
 	t.set_color("font_color", "Label", TEXT)
 	t.set_color("font_outline_color", "Label", Color("#05080c"))
 	t.set_constant("outline_size", "Label", 4)
@@ -39,7 +50,6 @@ static func make() -> Theme:
 	return t
 
 
-## Khung 9 phần từ một file ảnh. `pad_x`, `pad_y`: khoảng cách từ viền tới chữ bên trong.
 static func frame(path: String, pad_x: float, pad_y: float) -> StyleBoxTexture:
 	var s := StyleBoxTexture.new()
 	s.texture = load(path)
