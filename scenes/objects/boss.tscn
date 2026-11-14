@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/objects/boss.gd" id="1_boss"]
+
+[sub_resource type="CircleShape2D" id="Body"]
+radius = 26.0
+
+[node name="Boss" type="Node2D"]
+script = ExtResource("1_boss")
+
+[node name="Hurtbox" type="Area2D" parent="."]
+collision_layer = 32
+collision_mask = 2
+
+[node name="Shape" type="CollisionShape2D" parent="Hurtbox"]
+shape = SubResource("Body")

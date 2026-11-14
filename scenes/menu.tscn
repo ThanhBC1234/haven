@@ -1,0 +1,54 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/menu.gd" id="1_menu"]
+[ext_resource type="Script" path="res://scripts/background.gd" id="2_bg"]
+
+[node name="Menu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_menu")
+
+[node name="Background" type="CanvasLayer" parent="."]
+layer = -1
+
+[node name="Art" type="Node2D" parent="Background"]
+script = ExtResource("2_bg")
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Box" type="VBoxContainer" parent="Center"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Center/Box"]
+layout_mode = 2
+text = "BOUNCING BALL"
+horizontal_alignment = 1
+
+[node name="LevelGrid" type="GridContainer" parent="Center/Box"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/v_separation = 10
+
+[node name="Help" type="Label" parent="Center/Box"]
+layout_mode = 2
+text = "Hold A / D (or arrows) to tilt and charge. Press SPACE / W / UP to jump:
+the longer you charge, the farther you jump. Let go without jumping to cancel.
+Grab a gun and press F / J to shoot (hold A / D to aim up). Hearts heal, shields block one hit.
+Stomp or shoot enemies, beat the boss, go as far as you can.   R: respawn   Esc: menu"
+horizontal_alignment = 1
+
+[node name="QuitButton" type="Button" parent="Center/Box"]
+layout_mode = 2
+size_flags_horizontal = 4
+text = "Quit"

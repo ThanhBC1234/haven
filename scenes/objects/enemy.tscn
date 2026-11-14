@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/objects/enemy.gd" id="1_enemy"]
+
+[sub_resource type="RectangleShape2D" id="Body"]
+size = Vector2(30, 22)
+
+[sub_resource type="RectangleShape2D" id="Hit"]
+size = Vector2(34, 26)
+
+[node name="Enemy" type="CharacterBody2D"]
+collision_layer = 4
+collision_mask = 9
+script = ExtResource("1_enemy")
+
+[node name="Shape" type="CollisionShape2D" parent="."]
+shape = SubResource("Body")
+
+[node name="Hitbox" type="Area2D" parent="."]
+collision_layer = 0
+collision_mask = 2
+monitorable = false
+
+[node name="Shape" type="CollisionShape2D" parent="Hitbox"]
+shape = SubResource("Hit")

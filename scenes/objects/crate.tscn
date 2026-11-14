@@ -1,0 +1,19 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/objects/crate.gd" id="1_crate"]
+
+[sub_resource type="PhysicsMaterial" id="Wood"]
+friction = 0.7
+
+[sub_resource type="RectangleShape2D" id="Box"]
+size = Vector2(30, 30)
+
+[node name="Crate" type="RigidBody2D"]
+collision_layer = 8
+collision_mask = 11
+mass = 1.2
+physics_material_override = SubResource("Wood")
+script = ExtResource("1_crate")
+
+[node name="Shape" type="CollisionShape2D" parent="."]
+shape = SubResource("Box")
