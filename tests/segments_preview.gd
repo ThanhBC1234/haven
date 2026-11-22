@@ -1,4 +1,6 @@
 extends Node
+## Chụp menu, chế độ vô tận và toàn cảnh từng đoạn vô tận. Chạy có cửa sổ:
+##   godot --path . res://tests/segments_preview.tscn -- --shots=<thư mục>
 
 var dir := ""
 

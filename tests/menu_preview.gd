@@ -1,4 +1,5 @@
 extends Node
+## Chụp menu. Chạy có cửa sổ: godot --path . res://tests/menu_preview.tscn -- --shots=<thư mục>
 
 func _ready() -> void:
 	var dir := ""

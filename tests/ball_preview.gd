@@ -1,4 +1,7 @@
 extends Node
+## Chụp ảnh phóng to nhân vật ở 4 khoảnh khắc để xem hoạt ảnh. Chạy có cửa sổ:
+##   godot --path . res://tests/ball_preview.tscn -- --shots=<thư mục>
+## Lưu: 1_idle, 2_charge (giữ D), 3_jump (vừa thả), 4_land (vừa chạm đất).
 
 var dir := ""
 var cam: Camera2D

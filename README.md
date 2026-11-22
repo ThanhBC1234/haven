@@ -2,7 +2,7 @@
 
 Game hackathon "Bounce Back": con lật đật (trái banh đỏ trên đế vàng) nhảy và nảy theo vật lý thật.
 Copy cả thư mục đi đâu cũng chạy được. Màn chơi và nhân vật là thiết kế riêng, không lấy từ game khác.
-Chữ trong game bằng tiếng Anh. Code không có ghi chú; cách chỉnh từng phần xem các mục bên dưới.
+Chữ trong game bằng tiếng Anh; ghi chú trong code bằng tiếng Việt.
 
 ## Mở và chạy
 

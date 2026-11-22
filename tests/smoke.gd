@@ -1,16 +1,21 @@
 extends Node
+## Kiểm tra tự động các cơ chế. Chạy trong thư mục project:
+##   godot --headless --fixed-fps 60 --path . res://tests/smoke.tscn
+## Không dùng --headless và thêm `-- --shots=<thư mục>` để lưu ảnh toàn cảnh từng màn.
 
 var failures := 0
 var shots_dir := ""
 var hurts := 0
 
 
+## Chạy lần lượt các kiểm tra; in "ok" hoặc "FAIL" cho từng mục.
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shots="):
 			shots_dir = a.trim_prefix("--shots=")
-	Game.save_enabled = false
+	Game.save_enabled = false                      # không ghi đè file lưu thật của người chơi
 
+	# --- Menu ---
 	var menu: Control = load("res://scenes/menu.tscn").instantiate()
 	add_child(menu)
 	await _frames(3)
@@ -18,6 +23,7 @@ func _ready() -> void:
 	await _shot("00_menu")
 	menu.queue_free()
 
+	# --- Từng màn dựng được, bóng đứng trên đất, có 3 sao và đích ---
 	for i in LevelData.LEVELS.size():
 		var level := _make_level(LevelData.LEVELS[i]["map"])
 		var ball := _make_ball(level, level.start_position)
@@ -42,6 +48,7 @@ func _ready() -> void:
 		level.queue_free()
 		await _frames(2)
 
+	# --- Các đoạn vô tận đúng quy tắc ghép nối ---
 	for seg in [{"name": "Start", "map": SegmentData.START}] + SegmentData.SEGMENTS:
 		var rows: PackedStringArray = []
 		for line in String(seg["map"]).split("
@@ -60,6 +67,7 @@ func _ready() -> void:
 				ok = false
 		_expect(ok, "segment '%s': 18 rows, O at column 2, flat joinable ends, no crates/doors" % seg["name"])
 
+	# --- Giữ D: nghiêng phải, bấm nhảy: nhảy lên bên phải ---
 	var flat := "#..........................#\n#..........................#\n#..........................#\n#..O.......................#\n############################"
 	var lv := _make_level(flat)
 	var b := _make_ball(lv, lv.start_position)
@@ -75,19 +83,20 @@ func _ready() -> void:
 	await _frames(10)
 	_expect(b.global_position.x > x0 + 30 and b.linear_velocity.y < 0.0, "holding D then pressing jump jumps up-right")
 	var vy_before := b.linear_velocity.y
-	b.jump(1, 1.0)
+	b.jump(1, 1.0)                              # đang bay: không nhảy thêm được
 	await _frames(2)
 	_expect(b.linear_velocity.y >= vy_before, "cannot jump again in mid-air")
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Giữ A: nhảy sang trái ---
 	lv = _make_level(flat)
 	b = _make_ball(lv, lv.start_position + Vector2(400, 0))
 	await _frames(60)
 	x0 = b.global_position.x
 	Input.action_press("left")
 	await _frames(15)
-	Input.action_release("left")
+	Input.action_release("left")                   # thả A mà không bấm nhảy: hủy
 	await _frames(20)
 	_expect(b.on_ground and absf(b.global_position.x - x0) < 4.0 and b.charge_dir == 0, "letting go of A without jumping cancels the jump")
 	Input.action_press("left")
@@ -100,7 +109,7 @@ func _ready() -> void:
 	_expect(b.global_position.x < x0 - 20, "holding A then pressing jump jumps left")
 	await _frames(90)
 	x0 = b.global_position.x
-	Input.action_press("jump")
+	Input.action_press("jump")                     # không giữ A/D: nhảy thẳng lên
 	await _frames(1)
 	Input.action_release("jump")
 	await _frames(10)
@@ -108,6 +117,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Rơi xuống nảy như bóng thật: các lần nảy thấp dần rồi đứng yên ---
 	lv = _make_level("#.....#\n" .repeat(8) + "#..O..#\n#######")
 	b = _make_ball(lv, Vector2(112, 40))
 	var ground := lv.size.y - 32.0 - b.radius
@@ -129,6 +139,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Dẫm quái từ trên: quái chết, bóng không bị thương ---
 	lv = _make_level("#...........#\n#....O......#\n#...........#\n#...........#\n#....e......#\n#############")
 	b = _make_ball(lv, lv.start_position)
 	await _frames(60)
@@ -136,6 +147,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Quái đi tới đụng ngang: bóng bị thương ---
 	hurts = 0
 	lv = _make_level("#..............#\n#..O.......e...#\n################")
 	b = _make_ball(lv, lv.start_position)
@@ -144,6 +156,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Gai ---
 	hurts = 0
 	lv = _make_level("#.....#\n#..O..#\n#.....#\n#..^..#\n#######")
 	b = _make_ball(lv, lv.start_position)
@@ -152,6 +165,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Thùng rơi lên nút thì cửa mở ---
 	lv = _make_level("#.........#\n#..x......#\n#.........#\n#..a...A..#\n##########")
 	await _frames(60)
 	var door: Door = _first(lv, Door)
@@ -159,6 +173,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Bệ di chuyển ---
 	lv = _make_level("#..........#\n#.===...>..#\n#..........#")
 	var plat: MovingPlatform = _first(lv, MovingPlatform)
 	var px := plat.position.x
@@ -167,6 +182,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Lò xo ---
 	lv = _make_level("#.....#\n#..O..#\n#.....#\n#.....#\n#..T..#\n#######")
 	b = _make_ball(lv, lv.start_position)
 	var lowest_vy := 0.0
@@ -177,6 +193,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Bập bênh nghiêng khi bóng rơi lên một đầu ---
 	lv = _make_level("#.........#\n#.....O...#\n#.........#\n#.........#\n#....S....#\n#.........#\n###########")
 	b = _make_ball(lv, lv.start_position + Vector2(40, 0))
 	await _frames(60)
@@ -186,6 +203,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Thùng về chỗ cũ khi gọi reset (dùng khi hồi sinh) ---
 	lv = _make_level("#..........#
 #..x.......#
 ############")
@@ -201,13 +219,14 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Dốc: là mặt đất thật (đáp lên được), dốc đứng thì trượt xuống ---
 	hurts = 0
 	lv = _make_level("#........#
 #..O.....#
 #........#
 #..12##..#
 ##########")
-	b = _make_ball(lv, Vector2(144, 80))
+	b = _make_ball(lv, Vector2(144, 80))            # thả nhẹ ngay trên nửa cao của dốc thoải (ô "2")
 	await _frames(15)
 	_expect(b.on_ground and b.global_position.y < 100.0, "a gentle slope is solid ground (y=%.0f)" % b.global_position.y)
 	lv.queue_free()
@@ -223,6 +242,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Trái tim, khiên ---
 	var hearts := [0]
 	lv = _make_level("#.....#
 #..O..#
@@ -249,6 +269,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Jump boost: nhặt mũi tên xanh thì nhảy cao hơn ---
 	lv = _make_level("#.....#
 " .repeat(10) + "#..O..#
 #..j..#
@@ -272,6 +293,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Súng: nhặt được đạn, bắn hạ quái ---
 	lv = _make_level("#..............#
 #..O...........#
 #..g........e..#
@@ -286,6 +308,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Boss: chỉ lăn trên mặt đất; đụng ngang thì bị thương; dẫm đầu / bắn thì mất máu; hết máu thì cổng mở ---
 	hurts = 0
 	lv = _make_level("#..............................#
 #..............................#
@@ -317,7 +340,7 @@ func _ready() -> void:
 	await _frames(8)
 	_expect(boss.hp == hp0 - 1, "a horizontal bullet hits the boss")
 	b.invuln = 0.0
-	b.teleport(boss.global_position + Vector2(0, -110))
+	b.teleport(boss.global_position + Vector2(0, -110))   # thả người chơi rơi lên đầu boss
 	boss.state = Boss.State.DIZZY
 	boss._timer = 5.0
 	hurts = 0
@@ -331,6 +354,7 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
+	# --- Thanh máu boss trên HUD (màn Boss Arena) ---
 	Game.level_index = LevelData.LEVELS.size() - 1
 	var arena: Node = load("res://scenes/play.tscn").instantiate()
 	add_child(arena)
@@ -342,12 +366,13 @@ func _ready() -> void:
 	arena.queue_free()
 	await _frames(2)
 
+	# --- Chế độ vô tận: dựng đoạn phía trước, xóa đoạn đã qua, điểm, hệ số nhân, sao, thua ---
 	var endless: Node = load("res://scenes/endless.tscn").instantiate()
 	add_child(endless)
 	await _frames(20)
 	_expect(endless.chunks.size() >= 2 and endless._end_x > endless.ball.global_position.x + 2000.0, "endless builds segments ahead of the player")
 	var first_chunk: Level = endless.chunks[0]
-	for k in 7:
+	for k in 7:                                    # nhảy cóc tới đầu đoạn xa nhất vài lần
 		var far: Level = endless.chunks[-1]
 		endless.ball.teleport(far.position + far.start_position)
 		await _frames(12)
@@ -368,6 +393,7 @@ func _ready() -> void:
 	endless.queue_free()
 	await _frames(2)
 
+	# --- Cảnh chơi: bị thương mất mạng rồi hồi sinh; chạm đích hiện bảng qua màn ---
 	Game.level_index = 0
 	var play: Node = load("res://scenes/play.tscn").instantiate()
 	add_child(play)
@@ -390,6 +416,7 @@ func _ready() -> void:
 	get_tree().quit(1 if failures > 0 else 0)
 
 
+## Dựng một màn từ bản đồ chữ.
 func _make_level(map: String) -> Level:
 	var level := Level.new()
 	add_child(level)
@@ -397,6 +424,7 @@ func _make_level(map: String) -> Level:
 	return level
 
 
+## Thả bóng vào màn và đếm số lần bị thương.
 func _make_ball(level: Level, pos: Vector2) -> Ball:
 	var ball: Ball = load("res://scenes/ball.tscn").instantiate()
 	ball.position = pos

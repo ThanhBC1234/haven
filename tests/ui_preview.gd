@@ -1,4 +1,6 @@
 extends Node
+## Chụp ảnh menu, một số đoạn trong màn và bảng qua màn để xem giao diện. Chạy có cửa sổ:
+##   godot --path . res://tests/ui_preview.tscn -- --shots=<thư mục>
 
 var dir := ""
 
