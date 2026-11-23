@@ -1,0 +1,5 @@
+# Bộ nhớ đệm của Godot (tự sinh lại khi mở project)
+.godot/
+# Bản xuất (web build, file zip)
+build/
+exports/

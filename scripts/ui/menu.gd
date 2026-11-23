@@ -68,17 +68,27 @@ func _ready() -> void:
 
 	endless.pressed.connect(Game.start_endless)   # bấm là vào chế độ vô tận
 	level_grid.add_child(endless)               # đặt vào lưới nút
+	var star_icon := _star_texture()            # ngôi sao pixel (font Peaberry không có ký tự ★, trình duyệt cũng không có font dự phòng)
 	for i in LevelData.LEVELS.size():           # tạo một nút cho mỗi màn
 		var b := Button.new()                   # nút mới
 		var stars: int = Game.best_stars.get(i, 0)   # số sao tốt nhất của màn i (chưa chơi = 0)
-		b.text = "%d. %s   %s" % [i + 1, LevelData.LEVELS[i]["name"], "★".repeat(stars)]   # hiện số sao tốt nhất
+		b.text = "%d. %s   %d" % [i + 1, LevelData.LEVELS[i]["name"], stars]   # hiện số sao tốt nhất
+		b.icon = star_icon                      # ngôi sao pixel nằm sau con số
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT   # icon đứng bên phải chữ
+		b.expand_icon = false                   # giữ đúng cỡ icon, không kéo giãn
 		b.custom_minimum_size = Vector2(380, 56)   # cỡ nút
 		b.pressed.connect(Game.start_level.bind(i))    # bấm là vào màn i
 		level_grid.add_child(b)                 # đặt vào lưới
-	var bank := Label.new()                            # tổng sao đã gom
-	bank.text = "★ %d stars collected" % Game.total_stars   # vd: ★ 12 stars collected
-	bank.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER   # canh giữa
-	bank.add_theme_color_override("font_color", Color("#f7d046"))   # chữ màu vàng
+	var bank := HBoxContainer.new()                    # hàng tổng sao đã gom: icon sao + chữ
+	bank.alignment = BoxContainer.ALIGNMENT_CENTER     # canh giữa
+	var bank_icon := TextureRect.new()                 # icon ngôi sao
+	bank_icon.texture = star_icon                      # dùng chung hình sao pixel
+	bank_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED   # giữ cỡ gốc, nằm giữa ô
+	bank.add_child(bank_icon)                          # đặt icon vào hàng
+	var bank_text := Label.new()                       # chữ số sao
+	bank_text.text = "%d stars collected" % Game.total_stars   # vd: 12 stars collected
+	bank_text.add_theme_color_override("font_color", Color("#f7d046"))   # chữ màu vàng
+	bank.add_child(bank_text)                          # đặt chữ sau icon
 	level_grid.get_parent().add_child(bank)     # gắn vào khối chứa lưới nút
 	level_grid.get_parent().move_child(bank, level_grid.get_index() + 1)   # đặt ngay dưới lưới nút
 	level_grid.columns = 2                             # các nút màn xếp 2 cột cho gọn
@@ -98,10 +108,23 @@ func _ready() -> void:
 	help.text = "Hold A / D to aim, SPACE to jump, F / J to shoot.  Open HOW TO PLAY for everything else."
 	quit_button.custom_minimum_size = Vector2(160, 52)   # cỡ nút Quit
 	quit_button.pressed.connect(get_tree().quit)   # bấm là thoát game
+	quit_button.visible = not OS.has_feature("web")   # trên trình duyệt (itch.io) không thoát được nên ẩn nút Quit
 	level_grid.get_child(0).grab_focus()               # chọn sẵn màn 1, bấm Enter là chơi
 
 
 ## Dải đất rừng ở đáy menu (dùng chính Level và bộ gạch), có nhân vật đứng chơi được.
+## Tạo ảnh ngôi sao vàng từ hình pixel STAR của HUD, phóng 3 lần (21 x 21).
+func _star_texture() -> ImageTexture:
+	const PX := 3                               # mỗi ô pixel của hình = 3 x 3 pixel thật
+	var pattern: Array = Hud.STAR               # hình ngôi sao 7 x 7 (chuỗi "0"/"1")
+	var img := Image.create(7 * PX, 7 * PX, false, Image.FORMAT_RGBA8)   # ảnh trong suốt
+	for y in pattern.size():                    # duyệt từng hàng của hình
+		for x in pattern[y].length():           # duyệt từng ô trong hàng
+			if pattern[y][x] == "1":            # ô "1" là có màu
+				img.fill_rect(Rect2i(x * PX, y * PX, PX, PX), Color("#f7d046"))   # tô ô màu vàng
+	return ImageTexture.create_from_image(img)  # đổi ảnh thành texture để hiển thị
+
+
 func _build_ground() -> void:
 	var rows := []                              # các hàng của bản đồ chữ
 	for r in 23:                                # bản đồ cao 23 hàng
