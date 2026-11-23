@@ -59,7 +59,7 @@ func _on_body_entered(body: Node2D) -> void:
 			if used:                             # đã nhặt rồi thì bỏ qua
 				return
 			used = true                          # đánh dấu đã nhặt
-			level.collect_star()                 # báo màn chơi +1 sao
+			level.collect_star(body)             # báo màn chơi +1 sao, kèm quả bóng đã nhặt
 			queue_free()                         # xoá ngôi sao khỏi màn
 		"checkpoint":
 			if used:                             # cờ đã cắm rồi

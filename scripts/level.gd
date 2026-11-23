@@ -6,6 +6,7 @@ extends Node2D                         # màn chơi là một node 2D chứa m�
 ## Level phát tín hiệu để play.gd và cửa nghe.
 
 signal star_collected                  # nhặt được một ngôi sao
+signal star_collected_by(ball: Ball)   # nhặt được một ngôi sao, kèm quả bóng nhặt (null nếu không rõ)
 signal checkpoint_reached(pos: Vector2)   # chạm cờ lưu, kèm vị trí hồi sinh
 signal finished                        # chạm đích: qua màn
 signal channel_changed(channel: String, on: bool)   # một kênh nút/cửa vừa mở hoặc đóng
@@ -254,8 +255,10 @@ func reset_crates() -> void:
 			c.reset()                               # đưa thùng về chỗ cũ
 
 
-func collect_star() -> void:
-	star_collected.emit()                           # báo đã nhặt một sao
+## Nhặt một sao; `by` là quả bóng nhặt (không bắt buộc).
+func collect_star(by: Ball = null) -> void:
+	star_collected.emit()                           # báo đã nhặt một sao (người nghe cũ vẫn chạy)
+	star_collected_by.emit(by)                      # báo thêm ai là người nhặt
 
 
 func collect_heart() -> void:

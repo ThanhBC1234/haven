@@ -17,6 +17,8 @@ const PALETTE := {                      # bảng màu: ký tự -> màu
 	"C": Color("#3c8ea0"),   # xanh ngọc tối
 	"y": Color("#f7d046"),   # vàng
 	"o": Color("#e8892b"),   # cam
+	"Y": Color("#b8861b"),   # vàng sẫm (mép vàng, bóng của vương miện)
+	"b": Color("#6e4b1a"),   # nâu (cuống chuối, ngòi cháy)
 }
 
 # Trái tim 7 x 7.
@@ -85,6 +87,88 @@ const BOSS := [
 	".kppppppppppppk.",
 	"...kkppppppkk...",
 	".....kkkkkk.....",
+]
+
+
+# Vương miện vàng 11 x 7 (3 nhọn, đá đỏ ở giữa, đá xanh hai bên).
+const CROWN := [
+	".k...k...k.",
+	"kyk.kyk.kyk",
+	"kyyyyyyyyyk",
+	"kcYyyryyYck",
+	"kYyyyyyyyYk",
+	"kYYYYYYYYYk",
+	"kkkkkkkkkkk",
+]
+
+# Vỏ chuối 10 x 9 (vỏ vàng cong, cuống nâu, mép tối).
+const BANANA := [
+	".....kbk..",
+	"...kyyyyk.",
+	"..kyyYk...",
+	".kyyYk....",
+	".kyyyYk...",
+	".kyyYk....",
+	"..kyyYk...",
+	"...kyyYk..",
+	".....kbk..",
+]
+
+# Bom đen 10 x 11 (thân tròn, ngòi cháy nâu, tia lửa vàng và trắng).
+const BOMB := [
+	"........y.",
+	".......ywy",
+	"......bby.",
+	"...kkkk...",
+	"..kgGGGk..",
+	".kgGGGGk..",
+	".kgGGGGGk.",
+	".kGGGGGGk.",
+	".kGGGGGGk.",
+	"..kGGGGk..",
+	"...kkkk...",
+]
+
+# Hai mũi tên ngược chiều 11 x 9 (trên chỉ phải, dưới chỉ trái; biểu tượng đổi chỗ).
+const SWAP := [
+	".......kk..",
+	"kkkkkkkkck.",
+	"kccccccccck",
+	"kkkkkkkkck.",
+	".......kk..",
+	"...........",
+	"..kk.......",
+	".kckkkkkkkk",
+	"kccccccccck",
+	".kckkkkkkkk",
+	"..kk.......",
+]
+
+# Bẫy lò xo nhún 10 x 8 (bệ đỏ trên, lò xo zigzag bạc ở giữa, đế xám tối dưới).
+const SPRING := [
+	".kkkkkkkk.",
+	"krrrrrrrrk",
+	"...gg.....",
+	"....gg....",
+	"...gg.....",
+	"....gg....",
+	"...gg.....",
+	"kGGGGGGGGk",
+]
+
+# Neo tàu 9 x 11 (vòng trên, thân dọc, xà ngang, đáy cong lên hai mỏ nhọn).
+const ANCHOR := [
+	"...kkk...",
+	"..kg.gk..",
+	"..kkgkk..",
+	".kkkgkkk.",
+	".kgggggk.",
+	".kkkgkkk.",
+	"...kgk...",
+	"kk.kgk.kk",
+	"kgkkgkkgk",
+	"kgggggggk",
+	".kkkkkkk.",
 ]
 
 

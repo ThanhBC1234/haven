@@ -6,7 +6,8 @@ extends Node
 const MENU_SCENE := "res://scenes/menu.tscn"         # đường dẫn cảnh menu
 const PLAY_SCENE := "res://scenes/play.tscn"         # đường dẫn cảnh chơi màn thường
 const ENDLESS_SCENE := "res://scenes/endless.tscn"   # đường dẫn cảnh chế độ vô tận
-const SAVE_PATH := "user://bouncing_ball.cfg"   # file lưu (nằm trong thư mục dữ liệu của Godot trên máy)
+const BRAWL_SCENE := "res://scenes/brawl.tscn"      # đường dẫn cảnh chế độ đấu 2 người (Bounce Brawl)
+const SAVE_PATH :="user://bouncing_ball.cfg"   # file lưu (nằm trong thư mục dữ liệu của Godot trên máy)
 
 ## Phím điều khiển. Muốn đổi phím thì sửa ở đây (KEY_A, KEY_SPACE, KEY_LEFT...).
 ## Giữ A/← hoặc D/→ để nghiêng và tích lực; bấm Space / W / ↑ để nhảy.
@@ -17,6 +18,15 @@ const KEYS := {
 	"shoot": [KEY_F, KEY_J],    # bắn (khi đã nhặt súng)
 	"restart": [KEY_R],        # tự nổ, về cờ lưu / đầu đoạn
 	"back": [KEY_ESCAPE],      # về menu
+	# Phím riêng cho chế độ 2 người chơi (Ball.action_prefix = "p1_" hoặc "p2_")
+	"p1_left": [KEY_A],        # người chơi 1: trái
+	"p1_right": [KEY_D],       # người chơi 1: phải
+	"p1_jump": [KEY_W],        # người chơi 1: nhảy
+	"p1_use": [KEY_S],         # người chơi 1: dùng vật phẩm / kỹ năng
+	"p2_left": [KEY_LEFT],     # người chơi 2: trái
+	"p2_right": [KEY_RIGHT],   # người chơi 2: phải
+	"p2_jump": [KEY_UP],       # người chơi 2: nhảy
+	"p2_use": [KEY_DOWN],      # người chơi 2: dùng vật phẩm / kỹ năng
 }
 
 var level_index := 0       # màn thường đang chơi (0 = màn đầu trong LevelData.LEVELS)
@@ -24,6 +34,7 @@ var best_stars := {}       # số sao nhiều nhất từng màn thường: {ch�
 var best_score := 0        # điểm cao nhất chế độ vô tận
 var total_stars := 0       # tổng số sao đã gom qua mọi lượt chơi
 var save_enabled := true   # bài test tắt đi để không ghi đè kỷ lục thật
+var brawl_vs_bot := false  # chế độ đấu 2 người: true = người chơi 2 là máy (chỉ lưu cờ, bot làm ở phần sau)
 
 
 ## Godot gọi một lần khi mở game: cài phím, đọc file lưu.
@@ -48,6 +59,12 @@ func start_level(index: int) -> void:
 ## Vào chế độ vô tận.
 func start_endless() -> void:
 	get_tree().change_scene_to_file(ENDLESS_SCENE)   # chuyển sang cảnh vô tận
+
+
+## Vào chế độ đấu 2 người (Bounce Brawl). `vs_bot` = true: người chơi 2 do máy điều khiển (bot làm ở phần sau).
+func start_brawl(vs_bot := false) -> void:
+	brawl_vs_bot = vs_bot                    # nhớ để cảnh đấu và nút Rematch dùng lại
+	get_tree().change_scene_to_file(BRAWL_SCENE)   # chuyển sang cảnh đấu 2 người
 
 
 ## Sang màn kế tiếp. Trả về false nếu đã là màn cuối.

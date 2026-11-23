@@ -17,9 +17,16 @@ signal shield_changed(on: bool)      # có / mất khiên (HUD hiện biểu tư
 signal ammo_changed(ammo: int)       # số đạn thay đổi (HUD hiện số đạn)
 signal shot                          # vừa bắn (để gắn âm thanh)
 signal boost_changed(seconds_left: float)   # jump boost còn bao lâu (0 = hết); HUD hiện thanh đếm ngược
+signal use_pressed                   # (2 người chơi) vừa bấm phím "use" của mình; chế độ chơi quyết định "use" làm gì
+signal stomped(victim: Ball)         # (2 người chơi) vừa đáp từ trên xuống đầu một quả bóng khác
 
 const BULLET_SCENE := preload("res://scenes/objects/player_bullet.tscn")   # cảnh viên đạn, nạp sẵn để bắn
 const JUMP_BOOST_TEXTURE := preload("res://assets/items/jump_boost.png")   # ảnh mũi tên xanh dưới chân
+const BALL_LAYER := 2                   # lớp va chạm của các quả bóng (bit giá trị 2), dùng cho set_collide_with_balls
+# Người chơi 2 đổi màu bằng cách hoán đổi kênh đỏ và xanh dương của hình (đỏ sẫm thành xanh sẫm, nâu thành xanh nhạt).
+const SWAP_RB_CODE := "shader_type canvas_item;\nvoid fragment() {\n\tCOLOR.rgb = COLOR.bgr;\n}\n"   # mã shader hoán đổi màu
+
+static var _swap_rb_shader: Shader = null   # shader dùng chung cho mọi quả bóng của người chơi 2
 
 @export var radius := 15.0              # bán kính thân (pixel); 1 ô = 32 pixel
 
@@ -48,6 +55,28 @@ const JUMP_BOOST_TEXTURE := preload("res://assets/items/jump_boost.png")   # ả
 
 @export var show_placeholder := false   # vẽ hình tạm bằng code; tắt khi đã có hình thật (node Sprite)
 
+@export_group("Hai người chơi")         # nhóm thông số chế độ 2 người
+@export var stomp_speed := 300.0        # phải rơi nhanh hơn bấy nhiêu (pixel/giây) mới tính là dẫm đầu bóng khác
+@export var stomp_bounce := 260.0       # dẫm xong được nảy lên nhẹ với vận tốc này (nhỏ hơn stomp_speed để không dẫm liên tục)
+@export var stomp_cooldown := 0.4       # sau mỗi lần dẫm phải chờ bấy nhiêu giây mới dẫm tiếp được
+
+## Tiền tố tên phím: "" = phím đơn (left/right/jump/shoot), "p1_" / "p2_" = phím riêng của người chơi 1 / 2.
+## Đổi tiền tố lúc đang chơi (ví dụ hai người hoán đổi phím) thì bỏ luôn lực đang tích, không bị kẹt.
+var action_prefix := "":
+	set(value):
+		action_prefix = value                        # nhận tiền tố mới
+		charge_dir = 0                               # phím cũ có thể đang được giữ: bỏ nghiêng
+		charge = 0.0                                 # bỏ lực đã tích
+## Đảo phím: true thì phím trái làm nhân vật nghiêng phải và ngược lại.
+var reverse_controls := false:
+	set(value):
+		reverse_controls = value                     # nhận chế độ đảo phím mới
+		charge_dir = 0                               # đổi phím giữa lúc đang tích thì hủy, tránh kẹt
+		charge = 0.0                                 # bỏ lực đã tích
+var player_id := 0            # 0 = chơi một mình, 1 / 2 = người chơi (đặt bằng set_player)
+var size_factor := 1.0        # hệ số kích thước hiện tại (đặt bằng set_size)
+var bullet_knockback := 0.0   # > 0: đạn bắn ra đẩy lùi quả bóng khác với lực này (không gây sát thương)
+
 var on_ground := false        # đang chạm đất không (tính lại mỗi khung vật lý)
 var dead := false             # đang chờ hồi sinh: không điều khiển, không bị thương
 var charge := 0.0             # 0..1: đã giữ phím được bao nhiêu phần của charge_time
@@ -67,6 +96,13 @@ var facing := 1               # hướng đang quay mặt (1 phải, -1 trái), 
 var _shoot_timer := 0.0       # còn bao lâu mới bắn được phát tiếp theo
 var boost_time := 0.0         # jump boost còn bao lâu
 var _time := 0.0              # tổng thời gian đã chạy (cho hiệu ứng nhấp nháy)
+var _kick := Vector2.ZERO     # cú hất đang chờ: khung vật lý tới sẽ cộng vào vận tốc (xem knockback)
+var _stomp_cd := 0.0          # còn bao lâu mới được dẫm tiếp
+var _touching_balls := {}     # các quả bóng đang chạm ở khung trước: {instance id: true} (để biết lúc VỪA chạm)
+var _base_radius := 15.0      # bán kính gốc (size 1.0)
+var _base_shape_radius := 15.0   # bán kính gốc của vòng va chạm
+var _base_mass := 1.0         # khối lượng gốc
+var _shape_copied := false    # đã nhân bản vòng va chạm riêng chưa (vì scene dùng chung một resource cho mọi bóng)
 
 
 ## Chạy một lần khi nhân vật được tạo.
@@ -77,6 +113,11 @@ func _ready() -> void:
 	can_sleep = false                                # không cho vật lý "ngủ", luôn phản ứng phím
 	lock_rotation = true                             # lật đật không lăn: thân thật luôn đứng thẳng
 	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE  # chống xuyên tường khi bay nhanh
+	_base_radius = radius                            # nhớ kích thước gốc để set_size(1.0) khôi phục đúng
+	_base_mass = mass                                # nhớ khối lượng gốc
+	var shape_node := get_node_or_null("Shape") as CollisionShape2D   # node vòng va chạm
+	if shape_node != null and shape_node.shape is CircleShape2D:      # là hình tròn như trong scene
+		_base_shape_radius = shape_node.shape.radius                  # nhớ bán kính gốc của vòng va chạm
 
 
 ## Godot gọi 60 lần mỗi giây: đọc phím, tích lực, cập nhật lắc lư.
@@ -89,6 +130,7 @@ func _physics_process(delta: float) -> void:
 			_jump_request = {}                       # quá lâu không chạm đất: bỏ cú nhảy
 	_coyote = maxf(0.0, _coyote - delta)             # thời gian coyote giảm dần về 0
 	_shoot_timer = maxf(0.0, _shoot_timer - delta)   # thời gian chờ bắn giảm dần
+	_stomp_cd = maxf(0.0, _stomp_cd - delta)         # thời gian chờ dẫm giảm dần
 	invuln = maxf(0.0, invuln - delta)               # thời gian miễn sát thương giảm dần
 	if boost_time > 0.0:                             # đang có jump boost
 		boost_time = maxf(0.0, boost_time - delta)   # đếm ngược thời gian boost
@@ -98,8 +140,10 @@ func _physics_process(delta: float) -> void:
 		facing = charge_dir                          # quay mặt theo hướng đang nghiêng
 	elif absf(linear_velocity.x) > 40.0:             # đang bay ngang đủ nhanh
 		facing = 1 if linear_velocity.x > 0.0 else -1   # quay mặt theo hướng bay
-	if not dead and Input.is_action_just_pressed("shoot"):   # vừa bấm nút bắn
+	if not dead and action_prefix.is_empty() and Input.is_action_just_pressed("shoot"):   # chơi một mình: vừa bấm nút bắn
 		shoot()                                      # bắn một viên
+	elif not dead and not action_prefix.is_empty() and Input.is_action_just_pressed(action_prefix + "use"):   # 2 người: bấm phím "use"
+		use_pressed.emit()                           # báo cho chế độ chơi, nó quyết định "use" làm gì
 	modulate.a = (0.35 if int(_time * 14.0) % 2 == 0 else 1.0) if invuln > 0.0 else 1.0   # nhấp nháy khi miễn sát thương
 	_update_wobble(delta)                            # cập nhật góc lắc lư của thân
 	queue_redraw()                                   # vẽ lại mũi tên, khiên...
@@ -117,6 +161,8 @@ func shoot() -> void:
 		dir = jump_velocity(charge_dir, maxf(charge, 0.3)).normalized()   # bắn theo hướng mũi tên nhảy
 	var b: Node2D = BULLET_SCENE.instantiate()       # tạo một viên đạn mới
 	b.direction = dir                                # cho đạn biết hướng bay
+	b.shooter = self                                 # đạn không trúng người bắn
+	b.knockback = bullet_knockback                   # > 0: đạn đẩy lùi quả bóng khác
 	b.position = global_position + Vector2(0, -2) + dir * 22.0   # bắn ngang tầm trái banh để trúng quái thấp
 	get_parent().add_child(b)                         # đạn nằm trong thế giới, không bay theo nhân vật
 	shot.emit()                                      # báo vừa bắn (phát âm thanh)
@@ -142,10 +188,14 @@ func give_shield() -> void:
 
 ## Giữ A/D để nghiêng và tích lực; bấm Space/W/↑ để nhảy; thả A/D mà không nhảy thì hủy.
 func _read_input(delta: float) -> void:
-	var left := Input.is_action_pressed("left")      # đang giữ phím trái không
-	var right := Input.is_action_pressed("right")    # đang giữ phím phải không
+	var left := Input.is_action_pressed(_action("left"))      # đang giữ phím trái không
+	var right := Input.is_action_pressed(_action("right"))    # đang giữ phím phải không
+	if reverse_controls:                             # đảo phím: trái thành phải, phải thành trái
+		var tmp := left                              # giữ tạm giá trị phím trái
+		left = right                                 # phím phải điều khiển hướng trái
+		right = tmp                                  # phím trái điều khiển hướng phải
 	# Xét phím nhảy TRƯỚC: thả A/D và bấm nhảy cùng lúc vẫn nhảy theo hướng đang nghiêng.
-	if Input.is_action_just_pressed("jump"):         # vừa bấm nhảy
+	if Input.is_action_just_pressed(_action("jump")):         # vừa bấm nhảy
 		if charge_dir != 0:                          # đang nghiêng một bên
 			jump(charge_dir, charge)                          # nhảy theo hướng đang nghiêng
 		else:
@@ -166,6 +216,84 @@ func _read_input(delta: float) -> void:
 		else:
 			charge_dir = 0                                    # thả A/D mà chưa nhảy: hủy, đứng thẳng lại
 			charge = 0.0                             # xoá lực đã tích
+
+
+## Tên hành động đầy đủ: tiền tố của người chơi + tên gốc ("left", "right", "jump", "use"). Mọi đọc phím đều qua đây.
+func _action(action: String) -> String:
+	return action_prefix + action                    # ví dụ "p2_" + "jump" = "p2_jump"
+
+
+## Đang giữ phím "use" của mình không (chỉ có nghĩa khi đã có tiền tố người chơi; chơi một mình luôn trả về false).
+func is_use_held() -> bool:
+	if dead or action_prefix.is_empty():             # đã chết hoặc chơi một mình: không có phím "use"
+		return false
+	return Input.is_action_pressed(_action("use"))   # đang giữ phím use của người chơi này
+
+
+## Gắn quả bóng này cho người chơi 1 hoặc 2: đặt tiền tố phím và đổi màu (người chơi 1 giữ màu gốc).
+func set_player(id: int) -> void:
+	if id != 1 and id != 2:                          # chỉ có hai người chơi
+		push_error("Ball.set_player: id must be 1 or 2, got %d" % id)   # báo lỗi dùng sai
+		return
+	player_id = id                                   # nhớ là người chơi nào
+	action_prefix = "p%d_" % id                      # phím riêng: p1_left, p2_jump...
+	var sprite := get_node_or_null("Sprite") as Node2D   # node hình (3 phần) của quả bóng
+	if sprite != null:                               # có hình thật
+		if id == 2:                                  # người chơi 2: hoán đổi màu đỏ/xanh của hình
+			if _swap_rb_shader == null:              # lần đầu: tạo shader dùng chung
+				_swap_rb_shader = Shader.new()       # tạo shader mới
+				_swap_rb_shader.code = SWAP_RB_CODE  # gán mã hoán đổi màu
+			var mat := ShaderMaterial.new()          # vật liệu riêng cho quả bóng này
+			mat.shader = _swap_rb_shader             # dùng shader chung
+			sprite.material = mat                    # áp lên node Sprite (nhấp nháy modulate.a của Ball vẫn chạy bình thường)
+		else:
+			sprite.material = null                   # người chơi 1: màu gốc
+		for part in sprite.get_children():           # 3 phần hình (đầu, lò xo, banh)
+			if part is CanvasItem:                   # là node vẽ được
+				part.use_parent_material = (id == 2)   # dùng vật liệu của node Sprite cha
+	queue_redraw()                                   # vẽ lại hình tạm (nếu có) theo màu mới
+
+
+## Bật / tắt va chạm với các quả bóng khác (mặc định tắt, chơi một mình không đổi). Cả hai bóng nên cùng bật.
+func set_collide_with_balls(on: bool) -> void:
+	set_collision_mask_value(BALL_LAYER, on)         # bật/tắt bit lớp "ball" trong mặt nạ va chạm
+
+
+## Đổi kích thước: `factor` 1.0 = gốc, 2.0 = gấp đôi. Đổi vòng va chạm, bán kính, hình và khối lượng (theo diện tích).
+## Gọi sau khi quả bóng đã vào cảnh. Bán kính, hình, khối lượng đổi ngay; vòng va chạm đổi vào cuối khung hình.
+func set_size(factor: float) -> void:
+	factor = maxf(factor, 0.1)                       # không cho nhỏ tới mức biến mất
+	size_factor = factor                             # nhớ hệ số hiện tại
+	_apply_shape_size.call_deferred()                # vòng va chạm đổi muộn một chút: gọi trong tín hiệu vật lý (nhặt đồ) sẽ báo lỗi nếu đổi ngay
+	radius = _base_radius * factor                   # bán kính (tính từ gốc nên set_size(1.0) khôi phục đúng)
+	mass = _base_mass * factor * factor              # khối lượng tỉ lệ với diện tích
+	var sprite := get_node_or_null("Sprite")         # node hình
+	if sprite != null and sprite.has_method("set_size_factor"):   # có script hoạt ảnh
+		sprite.set_size_factor(factor)               # phóng hình và đặt lại chân ở đáy vòng mới
+	queue_redraw()                                   # vẽ lại theo bán kính mới
+
+
+## Đặt bán kính vòng va chạm theo size_factor hiện tại (set_size gọi muộn để không đụng lúc Godot đang xử lý vật lý).
+func _apply_shape_size() -> void:
+	var shape_node := get_node_or_null("Shape") as CollisionShape2D   # node vòng va chạm
+	if shape_node == null or not shape_node.shape is CircleShape2D:   # không có hoặc không phải hình tròn
+		return
+	if not _shape_copied:                            # resource trong scene dùng chung cho mọi quả bóng
+		shape_node.shape = shape_node.shape.duplicate()   # nhân bản riêng trước khi sửa
+		_shape_copied = true                         # chỉ nhân bản một lần
+	shape_node.shape.radius = _base_shape_radius * size_factor   # đổi bán kính vòng va chạm (tính từ gốc nên 1.0 khôi phục đúng)
+
+
+## Làm nhân vật dẹt như cái bánh trong `seconds` giây rồi bật trở lại (chỉ hiệu ứng hình, vòng va chạm giữ nguyên).
+func flatten(seconds: float) -> void:
+	var sprite := get_node_or_null("Sprite")         # node hình
+	if sprite != null and sprite.has_method("flatten"):   # có script hoạt ảnh
+		sprite.flatten(seconds)                      # nhờ node hình làm hoạt ảnh dẹt
+
+
+## Hất quả bóng một cú: cộng `velocity` vào vận tốc ở khung vật lý tới (an toàn khi gọi từ tín hiệu va chạm).
+func knockback(velocity: Vector2) -> void:
+	_kick += velocity                                # ghi lại, _integrate_forces sẽ thực hiện
 
 
 ## Yêu cầu một cú nhảy theo hướng `dir` (-1 trái, 1 phải, 0 thẳng lên) với độ mạnh `amount` (0..1).
@@ -200,9 +328,22 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 
 	# 1. Chạm đất? Xét các điểm tiếp xúc có pháp tuyến hướng lên trên.
 	on_ground = false                                # mặc định là đang trên không
+	var touching := {}                               # các quả bóng khác đang chạm ở khung này
 	for i in state.get_contact_count():              # duyệt từng điểm chạm
-		if state.get_contact_local_normal(i).y < -0.6:   # mặt chạm hướng lên = mặt đất
+		var normal := state.get_contact_local_normal(i)   # pháp tuyến mặt chạm
+		if normal.y < -0.6:                          # mặt chạm hướng lên = mặt đất
 			on_ground = true                         # có chạm đất
+		var other := state.get_contact_collider_object(i) as Ball   # vật chạm có phải quả bóng khác không
+		if other != null:                            # đang chạm một quả bóng khác
+			var id := other.get_instance_id()        # mã định danh của nó
+			touching[id] = true                      # ghi nhận đang chạm
+			# Dẫm: bóng khác nằm DƯỚI (pháp tuyến hướng lên), VỪA chạm (không phải đang đứng trên đầu), rơi đủ nhanh, hết thời gian chờ.
+			if normal.y < -0.6 and not _touching_balls.has(id) and _last_vy >= stomp_speed \
+					and _stomp_cd <= 0.0 and not dead and not other.dead:
+				_stomp_cd = stomp_cooldown           # bắt đầu thời gian chờ dẫm
+				_bounce = maxf(_bounce, stomp_bounce)   # nảy lên nhẹ sau khi dẫm
+				emit_signal.call_deferred("stomped", other)   # báo muộn một chút để chế độ chơi đổi vật lý (kích thước, va chạm) thoải mái
+	_touching_balls = touching                       # nhớ để khung sau biết quả nào VỪA chạm
 	if on_ground:                                    # đang đứng trên đất
 		_coyote = coyote_time                        # chạm đất thì nạp lại thời gian coyote
 		if not _was_on_ground:                       # vừa mới chạm đất ở khung này
@@ -230,6 +371,12 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		_bounce = 0.0                                # đã bật, xoá yêu cầu
 		_coyote = 0.0                                # đang bay nên không được nhảy tiếp
 
+	# 4. Bị hất (đạn đẩy lùi, chiêu của người chơi khác): cộng thẳng vào vận tốc.
+	if _kick != Vector2.ZERO:                        # có cú hất đang chờ
+		state.linear_velocity += _kick               # cộng vào vận tốc hiện tại
+		_kick = Vector2.ZERO                         # đã hất, xoá yêu cầu
+		_coyote = 0.0                                # bị hất bay thì không được nhảy "ké" từ chỗ cũ
+
 
 ## Lắc lư kiểu lật đật: lúc giữ phím thì nghiêng theo lực, thả ra thì lò xo kéo về thẳng.
 func _update_wobble(delta: float) -> void:
@@ -249,6 +396,7 @@ func teleport(pos: Vector2) -> void:
 	charge = 0.0                                     # bỏ lực đã tích
 	_jump_request = {}                               # bỏ cú nhảy đang chờ
 	_bounce = 0.0                                    # bỏ cú bật lò xo / dẫm quái còn sót lại
+	_kick = Vector2.ZERO                             # bỏ cú hất còn sót lại
 	_coyote = 0.0                                    # không được nhảy "ké" từ chỗ cũ
 
 
@@ -278,6 +426,9 @@ func _draw() -> void:
 		# Theo mẫu của nhóm: trái banh đỏ sẫm có chấm sáng, ngồi trên đế vàng nửa vòng tròn.
 		var base_color := Color("#e3a72a")             # đế vàng
 		var ball_color := Color("#8e1418")             # banh đỏ sẫm
+		if player_id == 2:                             # người chơi 2: hoán đổi đỏ/xanh cho khác người chơi 1
+			base_color = Color(base_color.b, base_color.g, base_color.r)   # đế vàng thành xanh
+			ball_color = Color(ball_color.b, ball_color.g, ball_color.r)   # banh đỏ thành xanh sẫm
 		var base_center := Vector2(0, -radius + 1)     # tâm của nửa vòng tròn đế
 		var cup := PackedVector2Array()                # các điểm của hình đế
 		for i in 17:                                   # nửa vòng tròn phía dưới (đáy chạm đất)
@@ -297,10 +448,10 @@ func _draw() -> void:
 		# vẽ ảnh mũi tên xanh 24x24 dưới chân với độ mờ a
 		draw_texture_rect(JUMP_BOOST_TEXTURE, Rect2(Vector2(-12, radius - 8), Vector2(24, 24)), false, Color(1, 1, 1, a))
 	if has_shield and not dead:                      # khiên: vòng tròn pixel xanh ngọc bao quanh nhân vật
-		var center := Vector2(0, -17)                # tâm vòng khiên
+		var center := Vector2(0, -17) * size_factor  # tâm vòng khiên (to theo kích thước bóng)
 		for i in 28:                                 # 28 ô vuông nhỏ tạo thành vòng tròn
 			var a := TAU * i / 28.0 + _time * 0.8    # góc mỗi ô, cả vòng quay chậm theo thời gian
-			var p := center + Vector2(cos(a), sin(a)) * 38.0   # vị trí ô trên vòng bán kính 38
+			var p := center + Vector2(cos(a), sin(a)) * 38.0 * size_factor   # vị trí ô trên vòng bán kính 38
 			var col := Color("#7fd6e0") if i % 2 == 0 else Color("#3c8ea0")   # xen kẽ hai màu xanh
 			draw_rect(Rect2(p.snapped(Vector2(2, 2)) - Vector2(2, 2), Vector2(4, 4)), Color(col, 0.75))   # vẽ ô 4x4 hơi trong
 	if charge_dir != 0 and not dead:                 # mũi tên: hướng và độ mạnh cú nhảy

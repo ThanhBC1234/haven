@@ -29,6 +29,12 @@ extends Node2D                          # node vẽ hình, gắn làm con của 
 @export var head_follow := 150.0        # lớn = đầu bám theo nhanh, nhỏ = lắc lư nhiều
 @export var head_damping := 7.0         # giảm rung: lớn = đầu thôi lắc nhanh hơn
 
+@export_group("Dẹt như cái bánh (flatten)")   # nhóm thông số hiệu ứng dẹt
+@export var flat_stiffness := 300.0     # độ cứng lò xo dẹt: lớn = dẹt xuống và bật lại nhanh
+@export var flat_damping := 14.0        # giảm rung: nhỏ thì bật lại nảy vài nhịp trước khi đứng yên
+@export var flat_wide := 0.9            # dẹt hết cỡ thì rộng ra thêm bao nhiêu (0.9 = rộng gấp 1.9 lần)
+@export var flat_thin := 0.85           # dẹt hết cỡ thì thấp đi bao nhiêu (0.85 = chỉ còn cao 15%)
+
 # Chiều cao (pixel trong ảnh) của từng phần và chỗ chúng chồng lên nhau một chút để không hở.
 const BALL_H := 15.0                    # trái banh cao 15 pixel
 const SPRING_H := 9.0                   # lò xo cao 9 pixel
@@ -40,6 +46,10 @@ var _compress := 0.0      # > 0: lò xo đang nén; < 0: lò xo đang giãn
 var _compress_vel := 0.0  # tốc độ thay đổi độ nén
 var _head_angle := 0.0    # góc lắc của đầu (radian)
 var _head_vel := 0.0      # tốc độ lắc của đầu
+var _size := 1.0          # hệ số kích thước của quả bóng (Ball.set_size)
+var _flat := 0.0          # độ dẹt: 0 = bình thường, 1 = dẹt hết cỡ, < 0 = hơi dài ra lúc bật lại
+var _flat_vel := 0.0      # tốc độ thay đổi độ dẹt
+var _flat_time := 0.0     # còn bao lâu nữa giữ dẹt (giây)
 
 @onready var ball: Ball = get_parent()           # node cha chính là quả bóng người chơi
 @onready var ball_part: Sprite2D = $BallPart     # hình phần trái banh
@@ -50,10 +60,24 @@ var _head_vel := 0.0      # tốc độ lắc của đầu
 ## Chạy một lần: đặt gốc ở đáy banh, phóng to ảnh, nghe tín hiệu chạm đất và nhảy.
 func _ready() -> void:
 	position = Vector2(0, ball.radius)          # đáy của vòng va chạm
-	scale = Vector2.ONE * pixel_scale           # phóng to cả hình
+	scale = Vector2.ONE * pixel_scale * _size   # phóng to cả hình (theo kích thước bóng nếu đã đổi)
 	show_behind_parent = true                   # để mũi tên lực nhảy (vẽ ở Ball) nằm trên hình
 	ball.landed.connect(_on_landed)             # bóng chạm đất thì gọi _on_landed
 	ball.launched.connect(_on_launched)         # bóng bật nhảy thì gọi _on_launched
+
+
+## Ball.set_size gọi: phóng hình theo `factor` và đặt lại gốc ở đáy vòng va chạm mới (Ball.radius đã được đổi trước).
+func set_size_factor(factor: float) -> void:
+	_size = factor                              # nhớ hệ số kích thước
+	if not is_node_ready():                     # chưa vào cảnh: _ready sẽ tự đặt vị trí và kích thước
+		return
+	position = Vector2(0, ball.radius)          # đáy của vòng va chạm mới
+	_layout()                                   # xếp lại ngay để hình khớp vòng va chạm
+
+
+## Làm nhân vật dẹt như cái bánh trong `seconds` giây rồi bật trở lại (có nảy nhẹ).
+func flatten(seconds: float) -> void:
+	_flat_time = maxf(_flat_time, seconds)      # giữ dẹt trong ngần ấy giây (gọi lại thì lấy thời gian dài hơn)
 
 
 ## Chạm đất: banh bẹp và lò xo nén theo tốc độ rơi.
@@ -86,17 +110,27 @@ func _process(delta: float) -> void:
 	_head_vel += ((head_target - _head_angle) * head_follow - _head_vel * head_damping) * delta   # đầu đuổi theo góc đích
 	_head_angle += _head_vel * delta    # cập nhật góc đầu
 
+	# Dẹt như bánh: còn thời gian thì lò xo kéo về 1 (dẹt hết), hết thì kéo về 0 (bật lại, nảy vài nhịp).
+	var flat_target := 1.0 if _flat_time > 0.0 else 0.0   # độ dẹt mong muốn
+	_flat_time = maxf(0.0, _flat_time - delta)            # đếm ngược thời gian dẹt
+	_flat_vel += (-(_flat - flat_target) * flat_stiffness - _flat_vel * flat_damping) * delta   # lò xo kéo về đích
+	_flat += _flat_vel * delta          # cập nhật độ dẹt
+
 	_layout()                           # xếp lại vị trí 3 phần hình
 
 
 ## Xếp 3 phần chồng lên nhau theo độ bẹp / nén hiện tại. Mỗi phần có offset để "đứng" trên gốc của nó.
 func _layout() -> void:
+	# Cả hình: phóng theo pixel_scale và kích thước bóng; dẹt thì rộng ra, thấp xuống (gốc ở đáy nên chân vẫn chạm đất).
+	var f := clampf(_flat, -0.3, 1.0)                   # giới hạn độ dẹt (số âm = hơi dài ra khi bật lại)
+	scale = Vector2.ONE * pixel_scale * _size * Vector2(1.0 + f * flat_wide, 1.0 - f * flat_thin)   # phóng cả hình
 	var sq := clampf(_squash, -0.3, 0.45)               # giới hạn độ bẹp để hình không méo quá
 	ball_part.scale = Vector2(1.0 + sq, 1.0 - sq)       # bẹp: rộng ra, thấp xuống
 	var ball_h := BALL_H * (1.0 - sq)                   # chiều cao banh sau khi bẹp
 
 	# Trái banh tròn nên không cần xoay; lò xo và đầu ngả quanh đỉnh banh theo góc nghiêng (gồm cả lắc lư).
-	var lean := ball.tilt                                 # góc nghiêng hiện tại của bóng
+	var calm := 1.0 - clampf(f, 0.0, 1.0)                 # dẹt càng nhiều thì càng ít nghiêng (xoay trong hình bị dẹt sẽ méo)
+	var lean := ball.tilt * calm                          # góc nghiêng hiện tại của bóng
 	var c := clampf(_compress, -0.7, 0.6)                 # giới hạn độ nén/giãn của lò xo
 	spring.scale = Vector2(1.0 + c * 0.25, 1.0 - c)       # nén: ngắn lại, hơi phình ra
 	var top := Vector2(0, -ball_h + OVERLAP)              # đỉnh trái banh: chân lò xo
@@ -105,4 +139,4 @@ func _layout() -> void:
 	var spring_h := SPRING_H * (1.0 - c)                  # chiều cao lò xo sau khi nén
 
 	head.position = top + Vector2(0, -spring_h + OVERLAP).rotated(lean)   # đầu nằm ở đỉnh lò xo
-	head.rotation = lean + _head_angle                    # đầu nghiêng theo bóng cộng thêm lắc lư
+	head.rotation = lean + _head_angle * calm             # đầu nghiêng theo bóng cộng thêm lắc lư
