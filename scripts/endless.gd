@@ -181,7 +181,7 @@ func _on_ball_hurt() -> void:
 	ball.teleport(respawn)                            # đặt lại bóng ở chỗ hồi sinh
 	camera.global_position = respawn                  # camera nhảy tới chỗ hồi sinh
 	ball.dead = false                                 # bóng sống lại
-	ball.invuln = 1.0                                 # vừa hồi sinh: miễn sát thương 1 giây
+	ball.invuln = 1.5                                 # vừa hồi sinh: miễn sát thương 1,5 giây (đủ để quái đi ngang qua)
 	ball.show()                                       # hiện bóng
 	_busy = false                                     # mở khóa
 

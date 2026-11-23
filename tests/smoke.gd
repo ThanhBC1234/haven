@@ -339,14 +339,15 @@ func _ready() -> void:
 	lv.add_child(shot)
 	await _frames(8)
 	_expect(boss.hp == hp0 - 1, "a horizontal bullet hits the boss")
-	b.invuln = 0.0
 	b.teleport(boss.global_position + Vector2(0, -110))   # thả người chơi rơi lên đầu boss
 	boss.state = Boss.State.DIZZY
 	boss._timer = 5.0
+	await _frames(3)                              # chờ bóng rời khỏi thân boss rồi mới bỏ miễn sát thương
+	b.invuln = 0.0
 	hurts = 0
 	var hp1 := boss.hp
 	await _frames(30)
-	_expect(boss.hp == hp1 - 1 and hurts == 0, "stomping the boss's head damages it without hurting the player")
+	_expect(boss.hp == hp1 - 1 and hurts == 0, "stomping the boss's head damages it without hurting the player (hp %d -> %d, hurts %d)" % [hp1, boss.hp, hurts])
 	boss.take_damage(boss.hp)
 	await _frames(30)
 	var gate: Door = _first(lv, Door)
@@ -363,6 +364,9 @@ func _ready() -> void:
 	await _frames(40)
 	_expect(arena.hud._boss_max > 0, "HUD shows the boss health bar")
 	await _shot("14_boss_arena")
+	_first(arena.level, Boss).queue_free()        # boss bị xóa mà chưa bị hạ (vô tận: đoạn đường phía sau bị dọn)
+	await _frames(3)
+	_expect(arena.hud._boss_max == 0, "boss health bar disappears when the boss is removed")
 	arena.queue_free()
 	await _frames(2)
 
@@ -391,6 +395,68 @@ func _ready() -> void:
 	_expect(Game.best_score >= int(endless.score), "best score is recorded")
 	await _shot("13_game_over")
 	endless.queue_free()
+	await _frames(2)
+
+	# --- Dịch chuyển (hồi sinh) băng qua vực và đất: bóng phải đứng yên ở chỗ mới, không bị kéo ngược về mép vực ---
+	lv = _make_level("#..............#\n#..............#\n#..O...........#\n#####....#######\n#####....#######")
+	b = _make_ball(lv, Vector2(7 * 32, 0))
+	await _frames(25)                             # đang rơi nhanh trong vực
+	b.teleport(lv.start_position)
+	await _frames(40)
+	_expect(b.global_position.distance_to(lv.start_position) < 6.0 and b.on_ground, "teleport across a pit keeps the ball at the target (%s)" % b.global_position)
+	lv.queue_free()
+	await _frames(2)
+
+	# --- Đứng trên gai khi đang miễn sát thương: hết miễn thì vẫn bị thương ---
+	hurts = 0
+	lv = _make_level("#.....#\n#..O..#\n#..^..#\n#######")
+	b = _make_ball(lv, lv.start_position)
+	b.invuln = 0.6
+	await _frames(25)
+	_expect(hurts == 0, "invulnerable ball is not hurt by spikes")
+	await _frames(40)
+	_expect(hurts > 0, "spikes hurt a ball still standing on them after invulnerability ends")
+	lv.queue_free()
+	await _frames(2)
+
+	# --- Quái quay đầu trước gai (không đi xuyên qua bãi gai) ---
+	lv = _make_level("#............#\n#.^...e...^..#\n##############")
+	var walker: Enemy = _first(lv, Enemy)
+	var walk_min := walker.global_position.x
+	var walk_max := walker.global_position.x
+	for k in 600:
+		await _frames(1)
+		walk_min = minf(walk_min, walker.global_position.x)
+		walk_max = maxf(walk_max, walker.global_position.x)
+	_expect(walk_min > 2.5 * 32 and walk_max < 10.5 * 32 and walk_max - walk_min > 64.0, "enemy turns around at spikes (%.0f..%.0f)" % [walk_min, walk_max])
+	lv.queue_free()
+	await _frames(2)
+
+	# --- Màn 2: nhảy vòng qua cờ lưu vẫn lưu; rơi vực sau cờ thì hồi sinh ở cờ và đứng yên, không rơi tiếp ---
+	Game.level_index = 1
+	var play2: Node = load("res://scenes/play.tscn").instantiate()
+	add_child(play2)
+	await _frames(30)
+	var flag_x := 0.0
+	for c in play2.level.get_children():
+		if c is Pickup and c.kind == "checkpoint":
+			flag_x = c.global_position.x
+	play2.ball.teleport(Vector2(flag_x - 96, 496 - 128))   # bay ngang qua phía trên cờ, cao 4 ô
+	await _frames(2)
+	play2.ball.linear_velocity = Vector2(420, -150)
+	await _frames(40)
+	_expect(absf(play2.respawn_position.x - flag_x) < 1.0, "jumping over a checkpoint flag still activates it")
+	play2.ball.teleport(Vector2(flag_x + 6 * 32, 520))    # rơi xuống vực ngay sau cờ
+	await _frames(240)
+	_expect(play2.lives == 2 and not play2.ball.dead, "falling into the pit costs exactly one life")
+	_expect(play2.ball.global_position.distance_to(play2.respawn_position) < 6.0 and play2.ball.on_ground,
+		"ball respawns on the checkpoint and stays there (%s)" % play2.ball.global_position)
+	play2.hud.flash("test", 0.1)
+	await _frames(60)
+	play2.hud.show_message("Out of lives! Restarting...")
+	await _frames(2)
+	_expect(play2.hud._message.modulate.a == 1.0, "a message shown after a faded flash is visible")
+	play2.queue_free()
 	await _frames(2)
 
 	# --- Cảnh chơi: bị thương mất mạng rồi hồi sinh; chạm đích hiện bảng qua màn ---

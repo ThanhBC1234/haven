@@ -190,6 +190,10 @@ func jump_velocity(dir: int, amount: float) -> Vector2:
 func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 	if _teleport_to != null:                         # dịch tới chỗ hồi sinh, đứng yên
 		state.transform = Transform2D(0.0, _teleport_to)   # đặt thẳng vị trí mới, không xoay
+		# Đặt LẦN HAI cùng vị trí: lần đầu Godot còn nhớ chỗ cũ làm "điểm xuất phát" cho chống xuyên tường (CCD),
+		# khung sau nó tưởng bóng vừa bay xuyên qua đất nằm giữa hai chỗ và kéo bóng ngược về mép đất gần nhất
+		# (hồi sinh xong lại rơi xuống vực). Lần hai làm nó quên chỗ cũ.
+		state.transform = Transform2D(0.0, _teleport_to)   # đặt lại lần nữa để xoá vị trí cũ trong bộ nhớ CCD
 		state.linear_velocity = Vector2.ZERO         # đứng yên tại chỗ
 		_teleport_to = null                          # đã dịch xong
 		return
@@ -244,6 +248,8 @@ func teleport(pos: Vector2) -> void:
 	charge_dir = 0                                   # bỏ nghiêng
 	charge = 0.0                                     # bỏ lực đã tích
 	_jump_request = {}                               # bỏ cú nhảy đang chờ
+	_bounce = 0.0                                    # bỏ cú bật lò xo / dẫm quái còn sót lại
+	_coyote = 0.0                                    # không được nhảy "ké" từ chỗ cũ
 
 
 ## Bật lên với vận tốc `speed` (quái gọi khi bị dẫm, lò xo gọi khi chạm).

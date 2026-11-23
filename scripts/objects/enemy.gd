@@ -32,8 +32,10 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()                     # di chuyển và trượt dọc tường/đất
 	if is_on_wall():                     # vừa đụng tường
 		dir = -dir                           # đụng tường: quay đầu
-	elif is_on_floor() and not _ground_ahead():   # đang đứng đất nhưng phía trước hụt
-		dir = -dir                           # sắp rơi xuống vực: quay đầu
+	elif is_on_floor() and (not _ground_ahead() or _spikes_ahead()):   # đang đứng đất nhưng phía trước hụt hoặc có gai
+		dir = -dir                           # sắp rơi xuống vực / sắp đi vào gai: quay đầu
+	for body in hitbox.get_overlapping_bodies():   # bóng đang chạm quái (kể cả khi bóng vừa hết miễn sát thương)
+		_on_hitbox_body_entered(body)        # xử lý như lúc vừa chạm
 	queue_redraw()                       # vẽ lại để mắt nhìn theo hướng mới
 
 
@@ -42,6 +44,16 @@ func _ground_ahead() -> bool:
 	var from := global_position + Vector2(dir * (HALF.x + 2), 0)   # điểm ngay trước mũi quái
 	var query := PhysicsRayQueryParameters2D.create(from, from + Vector2(0, HALF.y + 10), 1 | 8)  # chỉ xét đất (lớp 1) và thùng (lớp 4)
 	return not get_world_2d().direct_space_state.intersect_ray(query).is_empty()   # tia trúng gì đó = còn đất
+
+
+## Xem ngay phía trước chân quái có gai không (gai nằm ở lớp va chạm 7 = giá trị 64).
+func _spikes_ahead() -> bool:
+	var query := PhysicsPointQueryParameters2D.new()   # hỏi "ở điểm này có gì"
+	query.position = global_position + Vector2(dir * (HALF.x + 6), HALF.y - 4)   # điểm sát đất ngay trước mũi quái
+	query.collision_mask = 64                    # chỉ tìm gai
+	query.collide_with_areas = true              # gai là vùng (Area2D)
+	query.collide_with_bodies = false            # không xét vật thể rắn
+	return not get_world_2d().direct_space_state.intersect_point(query, 1).is_empty()   # có gai = true
 
 
 ## Bóng chạm vào quái: từ trên xuống thì quái chết, còn lại thì bóng bị thương.

@@ -28,13 +28,14 @@ const HOW_TO_PLAY := [
 		"Press F or J to shoot straight ahead. Hold A / D while shooting to aim up diagonally.",
 		"Bullets kill slimes and hurt the boss."]],
 	# mục 3: cách đánh boss
-	["BOSS - GLOOMFANG", [
+	["BOSS", [
 		"It only rolls along the ground. Touching its side hurts you.",
 		"When a red ! appears it stops and shakes, then charges at you: jump over it!",
 		"After it hits a wall it is dizzy. Shoot it, or jump on its head. Every hit = 1 damage."]],
 	# mục 4: vật phẩm và phím tắt
 	["ITEMS", [
-		"Heart: +1 life.   Shield: blocks one hit.   Star: points.   R: respawn.   Esc: menu."]],
+		"Heart: +1 life.   Shield: blocks one hit.   Green arrow: higher jumps for 10 seconds.",
+		"Star: points.   R: respawn.   Esc: menu."]],
 ]
 
 

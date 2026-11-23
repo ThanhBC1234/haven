@@ -26,6 +26,8 @@ const ITEM_TEXTURES := {
 	"jump_boost": preload("res://assets/items/jump_boost.png"),
 }
 
+const CHECKPOINT_HEIGHT := 320.0         # vùng chạm của cờ lưu cao 10 ô (cao hơn cú nhảy mạnh nhất)
+
 var used := false       # cờ đã cắm / sao đã nhặt
 var _time := 0.0        # cho hiệu ứng lắc lư
 var _squash := 0.0      # lò xo nén xuống khi vừa bật
@@ -33,6 +35,11 @@ var _squash := 0.0      # lò xo nén xuống khi vừa bật
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)       # có vật chạm vào thì gọi hàm xử lý
+	if kind == "checkpoint":                     # cờ lưu: vùng chạm là cả cột cao phía trên cờ,
+		var tall := RectangleShape2D.new()       # để nhảy vòng qua trên đầu cờ vẫn được tính là đã lưu
+		tall.size = Vector2(32, CHECKPOINT_HEIGHT)   # rộng 1 ô, cao CHECKPOINT_HEIGHT pixel
+		$Shape.shape = tall                      # thay hình va chạm riêng cho cờ lưu (không đụng tới vật nhặt khác)
+		$Shape.position = Vector2(0, -CHECKPOINT_HEIGHT / 2.0)   # cột bắt đầu từ mặt đất đi lên
 
 
 func _process(delta: float) -> void:

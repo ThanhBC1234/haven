@@ -52,6 +52,17 @@ func _ready() -> void:
 	hud.watch_level(level)                        # HUD hiện thanh máu boss
 	level.heart_collected.connect(_on_heart)      # nhặt tim thì gọi _on_heart
 
+	# Tường vô hình nối dài hai mép màn lên cao: bật rất cao (lò xo, jump boost) cũng không bay qua đầu tường ra ngoài màn.
+	var bounds := StaticBody2D.new()              # thân đứng yên chứa hai bức tường
+	for wall_x in [TILE_MARGIN / 4.0, level.size.x - TILE_MARGIN / 4.0]:   # giữa cột tường trái và giữa cột tường phải
+		var wall := CollisionShape2D.new()        # hình va chạm của một bức tường
+		var rect := RectangleShape2D.new()        # hình chữ nhật
+		rect.size = Vector2(32, 2000)             # rộng 1 ô, cao 2000 pixel
+		wall.shape = rect                         # gán hình
+		wall.position = Vector2(wall_x, -1000)    # nằm ngay trên đỉnh màn (y từ -2000 tới 0)
+		bounds.add_child(wall)                    # gắn vào thân
+	level.add_child(bounds)                       # thêm vào màn
+
 const TILE_MARGIN := 64.0   # cho camera nhìn cao hơn đỉnh màn một chút
 
 
@@ -88,7 +99,7 @@ func _on_ball_hurt() -> void:
 	level.reset_crates()                          # thùng về chỗ cũ để không bị kẹt
 	camera.global_position = respawn_position     # camera nhảy tới chỗ hồi sinh
 	ball.dead = false                             # bóng sống lại
-	ball.invuln = 1.0                             # vừa hồi sinh: miễn sát thương 1 giây
+	ball.invuln = 1.5                             # vừa hồi sinh: miễn sát thương 1,5 giây (đủ để quái đi ngang qua)
 	ball.show()                                   # hiện bóng
 	_busy = false                                 # mở khóa
 

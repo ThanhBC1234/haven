@@ -17,6 +17,13 @@ func _on_body_entered(body: Node2D) -> void:
 		body.take_hit()                         # trừ máu / mạng của bóng
 
 
+# 60 lần mỗi giây: bóng còn đứng trên gai thì vẫn bị thương.
+# (Tín hiệu body_entered chỉ báo lúc vừa chạm; nếu lúc đó bóng đang được miễn sát thương thì sau đó đứng trên gai mãi không sao.)
+func _physics_process(_delta: float) -> void:
+	for body in get_overlapping_bodies():       # mọi vật đang nằm trong vùng gai
+		_on_body_entered(body)                  # xử lý như lúc vừa chạm (take_hit tự bỏ qua khi đang miễn sát thương)
+
+
 ## Hình tạm: 2 chiếc gai trong một ô.
 func _draw() -> void:
 	if not show_placeholder:

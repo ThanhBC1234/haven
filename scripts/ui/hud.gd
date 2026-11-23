@@ -25,6 +25,7 @@ var _boss_hp := 0                       # máu hiện tại của boss
 var _boss_max := 0                      # máu tối đa của boss
 var _boost := 0.0                       # jump boost còn bao lâu (giây)
 var _boost_full := 10.0                 # thời lượng boost đầy, để tính độ dài thanh
+var _flash_tween: Tween                 # hiệu ứng mờ dần của thông báo đang chạy (để hủy khi có thông báo mới)
 
 const HEART_TEX := preload("res://assets/items/heart.png")   # ảnh trái tim
 const SHIELD_TEX := preload("res://assets/items/shield.png")   # ảnh khiên
@@ -118,9 +119,11 @@ func flash(text: String, seconds := 0.9) -> void:
 	_message.text = text                        # đặt nội dung thông báo
 	_message.add_theme_color_override("font_color", UiTheme.ACCENT)   # tô màu nhấn
 	_message.modulate.a = 1.0                   # hiện rõ hoàn toàn
-	var tw := create_tween()                    # tạo hiệu ứng chuyển động (tween)
-	tw.tween_interval(seconds)                  # giữ nguyên chữ trong vài giây
-	tw.tween_property(_message, "modulate:a", 0.0, 0.5)   # rồi mờ dần về trong suốt trong 0.5 giây
+	if _flash_tween:                            # thông báo trước còn đang mờ dần
+		_flash_tween.kill()                     # hủy, để nó không làm mờ thông báo mới
+	_flash_tween = create_tween()               # tạo hiệu ứng chuyển động (tween)
+	_flash_tween.tween_interval(seconds)        # giữ nguyên chữ trong vài giây
+	_flash_tween.tween_property(_message, "modulate:a", 0.0, 0.5)   # rồi mờ dần về trong suốt trong 0.5 giây
 
 
 ## Bảng thua ở chế độ vô tận: điểm, kỷ lục, sao gom được, nút chơi lại / menu.
@@ -195,6 +198,8 @@ func _on_boss_started(boss: Node) -> void:
 	_boss = boss                                # nhớ boss đang đánh
 	_boss_max = boss.max_hp                     # máu tối đa
 	_boss_hp = boss.hp                          # máu hiện tại
+	if not boss.tree_exiting.is_connected(_on_boss_gone):   # chưa theo dõi boss này
+		boss.tree_exiting.connect(_on_boss_gone.bind(boss))   # boss bị xóa (đoạn đường phía sau bị dọn) thì bỏ thanh máu
 	boss.hp_changed.connect(func(hp: int, max_hp: int) -> void:   # mỗi khi máu boss thay đổi:
 		_boss_hp = hp                           # cập nhật máu
 		_boss_max = max_hp                      # cập nhật máu tối đa
@@ -204,6 +209,15 @@ func _on_boss_started(boss: Node) -> void:
 Shoot it (F / J) or jump on its head.
 When it shows a red ! - jump over its charge!" % boss.boss_name, 2.6)
 	queue_redraw()                              # vẽ thanh máu boss
+
+
+# Boss biến mất mà chưa bị hạ (chế độ vô tận: chạy vượt qua boss, đoạn đường đó bị dọn): bỏ thanh máu.
+func _on_boss_gone(boss: Node) -> void:
+	if _boss != boss:                           # đang theo dõi boss khác (hoặc đã hạ rồi) thì thôi
+		return
+	_boss = null                                # không còn boss
+	_boss_max = 0                               # máu tối đa 0 = không vẽ thanh máu
+	queue_redraw()                              # vẽ lại để xóa thanh máu
 
 
 # Boss bị hạ: bỏ thanh máu, báo chiến thắng.
@@ -228,6 +242,10 @@ func set_stars(n: int) -> void:
 
 # Hiện một dòng chữ giữa màn hình (không tự mờ đi).
 func show_message(text: String) -> void:
+	if _flash_tween:                            # thông báo trước còn đang mờ dần
+		_flash_tween.kill()                     # hủy hiệu ứng mờ
+	_message.modulate.a = 1.0                   # hiện rõ (thông báo trước có thể đã mờ hết)
+	_message.remove_theme_color_override("font_color")   # dùng lại màu chữ thường
 	_message.text = text                        # đặt nội dung thông báo
 
 

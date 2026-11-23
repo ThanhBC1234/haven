@@ -72,6 +72,9 @@ Chỉnh nhịp độ ở đầu `scripts/endless.gd`: `STAR_POINTS`, `SEGMENTS_P
 - Đang giữ A/D khi chạm lò xo hoặc dẫm quái thì bật chéo theo hướng đó.
 - Rơi xuống thì **nảy như bóng thật**: mỗi lần nảy thấp hơn (khoảng 30%) rồi đứng yên; thân lắc lư kiểu lật đật.
 - **3 mạng.** Chết thì hồi sinh ở cờ lưu. Hết mạng thì chơi lại màn.
+  - Cờ lưu tính cả khi nhảy vòng qua phía trên cờ (vùng chạm cao 10 ô, chỉnh ở `CHECKPOINT_HEIGHT` trong `scripts/objects/pickups.gd`).
+  - Vừa hồi sinh được miễn sát thương 1,5 giây. Hết thời gian đó mà vẫn đứng trên gai hoặc chạm quái thì bị thương.
+  - Quái quay đầu khi gặp gai, không đi xuyên qua bãi gai.
 - **Đồ vật:** quái đi tuần (dẫm từ trên thì chết, đụng ngang thì bị thương), gai, thùng gỗ, nút đạp và cửa, bệ di chuyển ngang/dọc, bập bênh, lò xo, sao (3 mỗi màn), cờ lưu, đích.
 
 Số đo để thiết kế màn (1 ô = 32 px):
@@ -188,4 +191,4 @@ Mỗi đồ vật đang tự vẽ hình tạm bằng code. Để thay bằng PNG
 godot --headless --fixed-fps 60 --path . res://tests/smoke.tscn
 ```
 
-Chạy 71 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.
+Chạy 80 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận, hồi sinh). `tests/soak.tscn` cho một bot chơi ngẫu nhiên chế độ vô tận và cả 3 màn để dò lỗi lúc chạy (dòng `ANOMALY` là chỗ cần xem). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.

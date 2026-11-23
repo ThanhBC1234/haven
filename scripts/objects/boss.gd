@@ -47,6 +47,7 @@ var _flash := 0.0                            # nháy trắng khi mất máu
 var _t := 0.0                                # tổng thời gian đã chạy (cho hiệu ứng)
 var _home_x := 0.0                           # chỗ đặt ban đầu (tâm vùng lăn)
 var _snapped := false                        # đã đặt sát mặt đất chưa (làm ở khung vật lý đầu tiên)
+var _stomp_cd := 0.0                         # còn bao lâu mới tính cú dẫm tiếp theo (tránh trừ máu nhiều lần một cú dẫm)
 
 @onready var hurtbox: Area2D = $Hurtbox      # vùng chạm: nhận đạn và va chạm với người chơi
 
@@ -78,6 +79,9 @@ func _physics_process(delta: float) -> void:
 		_snap_to_ground()                            # khung đầu: đất đã có trong thế giới vật lý
 	_t += delta                                  # cộng dồn thời gian
 	_flash = maxf(0.0, _flash - delta)           # hiệu ứng nháy trắng giảm dần
+	_stomp_cd = maxf(0.0, _stomp_cd - delta)     # thời gian chờ giữa hai cú dẫm giảm dần
+	for body in hurtbox.get_overlapping_bodies():   # người chơi đang chạm boss (kể cả khi vừa hết miễn sát thương)
+		_on_touch(body)                          # xử lý như lúc vừa chạm
 	var ball := get_tree().get_first_node_in_group("ball") as Ball   # tìm người chơi
 	match state:                                 # làm việc theo trạng thái hiện tại
 		State.SLEEP:
@@ -178,13 +182,15 @@ func _die() -> void:
 func _on_touch(body: Node2D) -> void:
 	if dead or not body is Ball or body.dead:    # chỉ xét người chơi còn sống
 		return
-	# người chơi ở cao hơn nửa thân boss và không đang bay vọt lên = dẫm từ trên
-	var from_above: bool = body.global_position.y < global_position.y - radius * 0.5 and body.linear_velocity.y > -60.0
-	if from_above:                               # dẫm trúng đầu
+	if body.global_position.distance_to(global_position) > radius + body.radius + 8.0:   # thật ra đã ở xa (vừa bị dịch chuyển đi, danh sách chạm chưa kịp cập nhật)
+		return
+	var above: bool = body.global_position.y < global_position.y - radius * 0.5   # người chơi ở cao hơn nửa thân boss
+	if not above:
+		body.take_hit()                          # đụng ngang: người chơi bị thương
+	elif body.linear_velocity.y > -60.0 and _stomp_cd <= 0.0:   # đang rơi xuống đầu boss và chưa vừa dẫm xong
+		_stomp_cd = 0.3                          # 0.3 giây sau mới tính cú dẫm kế
 		body.bounce_up(stomp_bounce)             # người chơi bật lên
 		take_damage(1)                           # boss mất 1 máu
-	else:
-		body.take_hit()                          # đụng ngang: người chơi bị thương
 
 
 func _draw() -> void:
