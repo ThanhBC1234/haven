@@ -14,6 +14,11 @@ func _ready() -> void:
 		if a.begins_with("--shots="):
 			shots_dir = a.trim_prefix("--shots=")
 	Game.save_enabled = false                      # không ghi đè file lưu thật của người chơi
+	if OS.get_cmdline_user_args().has("--only-items"):   # lúc đang làm vật phẩm: chạy riêng phần này cho nhanh (godot ... -- --only-items)
+		await _brawl_item_checks()
+		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
+		get_tree().quit(1 if failures > 0 else 0)
+		return
 
 	# --- Menu ---
 	var menu: Control = load("res://scenes/menu.tscn").instantiate()
@@ -487,6 +492,7 @@ func _ready() -> void:
 	await _two_player_checks()                     # nền tảng cho chế độ 2 người chơi
 	await _brawl_checks()                          # chế độ đấu 2 người (Bounce Brawl)
 	await _brawl_event_checks()                    # sự kiện ngẫu nhiên của chế độ đấu (roulette, 6 sự kiện)
+	await _brawl_item_checks()                     # vật phẩm troll, vương miện người dẫn điểm, câu châm chọc
 
 	print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 	get_tree().quit(1 if failures > 0 else 0)
@@ -885,7 +891,7 @@ func _two_player_checks() -> void:
 
 
 ## Dựng cảnh đấu 2 người với đấu trường số `arena`, rút ngắn mọi thời gian chờ để test chạy nhanh (chưa chờ hết phần giới thiệu).
-func _make_brawl(arena := 0, intro := 0.2, with_events := false) -> Brawl:
+func _make_brawl(arena := 0, intro := 0.2, with_events := false, with_items := false) -> Brawl:
 	var br: Brawl = load("res://scenes/brawl.tscn").instantiate()
 	br.arena_index = arena                          # chọn đấu trường cố định cho dễ đặt bóng
 	br.intro_seconds = intro                        # giới thiệu ngắn
@@ -893,6 +899,7 @@ func _make_brawl(arena := 0, intro := 0.2, with_events := false) -> Brawl:
 	br.win_panel_delay = 0.2                        # bảng thắng hiện nhanh
 	add_child(br)
 	br.events.enabled = with_events                 # sự kiện ngẫu nhiên tắt trừ khi bài test cần (các bài khác không bị sự kiện chen ngang)
+	br.items.enabled = with_items                   # hộp vật phẩm tự sinh cũng tắt trừ khi bài test cần (give / spawn_box gọi tay vẫn dùng được)
 	await _frames(2)
 	return br
 
@@ -1342,7 +1349,7 @@ func _brawl_event_checks() -> void:
 	await _frames(12)
 	_expect(br.scores[scorer_index] == 1 and br.scores[1 - scorer_index] == 0 and kills.size() == 1 and kills[0][0] == scorer and kills[0][1] == victim and kills[0][2] == "bomb", "HOT POTATO: when the fuse ends the carrier is killed with cause 'bomb' and the other player scores (%s)" % str(br.scores))
 	_expect(victim.dead and ev.active_event == "" and ev.bomb_carrier == null and _bomb_markers(victim) == 0 and _bomb_markers(scorer) == 0 and ends.size() > 0, "HOT POTATO: the bomb is gone and the event is over after the explosion")
-	_expect(br.hud.message_label.text == "P%d WENT BOOM!" % victim.player_id, "HOT POTATO: the point message reads '%s'" % br.hud.message_label.text)
+	_expect(br.hud.message_label.text in _taunt_options("bomb", scorer.player_id, victim.player_id), "HOT POTATO: the point message is one of the bomb taunts ('%s')" % br.hud.message_label.text)
 	await _frames(60)
 	_expect(not victim.dead and br.scores[scorer_index] == 1 and kills.size() == 1, "HOT POTATO: the victim respawns and nothing else scores")
 	br.queue_free()
@@ -1429,6 +1436,603 @@ func _brawl_event_checks() -> void:
 	_expect(_ev_props(a) == base and _ev_props(b) == base and _count(br.level, BrawlEvents.IceOverlay) == 0 and _bomb_markers(a) == 0 and _bomb_markers(b) == 0, "after the automatic events everything is back to normal")
 	br.queue_free()
 	await _frames(2)
+
+
+## Các câu châm chọc có thể hiện cho nguyên nhân `cause` khi người ghi điểm là P`s` và nạn nhân là P`v` (đã thay tên).
+func _taunt_options(cause: String, s: int, v: int) -> Array:
+	var out := []
+	for line in BrawlData.TAUNTS.get(cause, BrawlData.TAUNTS["default"]):
+		out.append(String(line).format({"s": "P%d" % s, "v": "P%d" % v}))
+	return out
+
+
+## Lý do một chỗ đặt hộp `pos` không hợp lệ (đọc thẳng bản đồ chữ, không dùng hàm của BrawlItems); "" = hợp lệ.
+func _spot_problem(br: Brawl, pos: Vector2) -> String:
+	var rows := br.level.rows
+	var floor_y := pos.y + BrawlItems.BOX_LIFT
+	var r := roundi(floor_y / 32.0)
+	var c := int(pos.x / 32.0)
+	if absf(floor_y - r * 32.0) > 1.0 or r < 2 or r >= rows.size():
+		return "feet are not on a tile top"
+	if rows[r][c] != "#":
+		return "no ground below (pit or air)"
+	if rows[r - 1][c] != "." or rows[r - 2][c] != ".":
+		return "cell not free (terrain / spawn / spikes) at %d,%d" % [r - 1, c]
+	for dc in [-1, 0, 1]:
+		if rows[r - 1][c + dc] in "^T":
+			return "next to spikes or a trampoline"
+	return ""
+
+
+## Xoá mọi hộp đang có (không qua nhặt).
+func _items_clear_boxes(it: BrawlItems) -> void:
+	for bx in it.boxes.duplicate():
+		it.boxes.erase(bx)
+		bx.queue_free()
+
+
+## Đặt bóng ở `pos` và chờ nó đứng yên.
+func _item_place(ball: Ball, pos: Vector2, frames := 30) -> void:
+	ball.teleport(pos)
+	await _frames(frames)
+
+
+## Vật phẩm troll, vương miện người dẫn điểm, câu châm chọc.
+func _brawl_item_checks() -> void:
+	var ground := 640.0                              # mặt đất của cả hai đấu trường (hàng 20)
+	var gy := ground - 15.0                          # độ cao tâm bóng đứng trên đất
+
+	# --- Cơ bản + không có gì lúc giới thiệu ---
+	var br := await _make_brawl(0, 0.6, false, true)
+	var it := br.items
+	var a := br.balls[0]
+	var b := br.balls[1]
+	_expect(it != null and it.get_parent() == br and BrawlItems.ITEM_IDS.size() == 4 and it.held == ["", ""] and it.boxes.is_empty() and it.traps.is_empty(), "brawl.items exists with four items, empty hands and no boxes")
+	_expect(it.spawn_interval == 6.0 and it.max_boxes == 2 and it.enabled and it.spring_life_seconds == 12.0 and it.banana_seconds == 3.0, "defaults: a box every 6 s, at most 2 boxes, banana 3 s, spring trap lives 12 s")
+	it.first_delay = 0.05
+	await _frames(30)
+	_expect(not br.match_running and it.boxes.is_empty() and it.spawn_box() == null, "no box spawns during the READY... intro (timer and spawn_box)")
+	it.give(a, "gun")
+	_expect(it.held[0] == "" and a.ammo == 0, "give() does nothing before the match starts")
+	await _brawl_ready(br)
+	_expect(it.boxes.size() == 1, "the first box appears right after the match starts (%d)" % it.boxes.size())
+	var first_box = it.boxes[0]
+	_expect(it.is_valid_spot(first_box.position) and _spot_problem(br, first_box.position) == "" and BrawlItems.ITEM_IDS.has(first_box.item_id), "the automatic box is on a valid spot and holds a real item (%s)" % first_box.item_id)
+	# giới hạn 2 hộp: sinh nhanh, không bao giờ vượt 2
+	it.spawn_interval = 0.1
+	it._next_in = 0.0                                # hộp đầu đã mọc: bỏ phần giờ đang đếm dở của khoảng 6 giây cũ
+	var most := 0
+	for i in 70:
+		await _frames(1)
+		most = maxi(most, it.boxes.size())
+	_expect(most == 2 and it.boxes.size() == 2, "at most max_boxes (2) boxes are on the field (peak %d)" % most)
+	var ids_seen := {}
+	for bx in it.boxes:
+		ids_seen[bx.item_id] = true
+	# nhặt một hộp thì hộp mới mọc lại
+	var picks := []
+	it.item_picked.connect(func(ball: Ball, id: String) -> void: picks.append([ball, id]))
+	var target_box = it.boxes[0]
+	var target_id: String = target_box.item_id
+	a.teleport(target_box.position + Vector2(0, 7))
+	await _frames(3)
+	_expect(it.held[0] == target_id and picks.size() == 1 and picks[0][0] == a and picks[0][1] == target_id and not it.boxes.has(target_box) and br.hud.item_ids[0] == target_id, "touching a box with an empty hand picks the item up (%s), the HUD slot shows it" % target_id)
+	await _frames(30)
+	_expect(it.boxes.size() == 2, "a new box appears after one was picked (%d boxes)" % it.boxes.size())
+	it.enabled = false
+	_items_clear_boxes(it)
+	br.queue_free()
+	await _frames(2)
+
+	# --- Hộp: chỗ đặt hợp lệ ở cả hai đấu trường, nhiều lần ---
+	for arena in BrawlData.ARENAS.size():
+		br = await _item_br(arena)
+		it = br.items
+		a = br.balls[0]
+		b = br.balls[1]
+		var bad := []
+		var spots := {}
+		var high := 0
+		var count_ok := 0
+		for i in 80:
+			var bx = it.spawn_box()
+			if bx == null:
+				bad.append("no spot found")
+				continue
+			var problem := _spot_problem(br, bx.position)
+			if problem != "":
+				bad.append(problem)
+			if not it.is_valid_spot(bx.position):
+				bad.append("is_valid_spot disagrees")
+			if a.global_position.distance_to(bx.position) < 100.0 or b.global_position.distance_to(bx.position) < 100.0:
+				bad.append("on top of a player")
+			if bx.position.y < ground - 100.0:
+				high += 1
+			spots[bx.position] = true
+			count_ok += 1
+			_items_clear_boxes(it)
+		_expect(bad.is_empty() and count_ok == 80, "arena %d: 80 random box spots are all on ground / platforms, never in terrain, over a pit, on spikes / trampolines, on a spawn or on a player (%s)" % [arena, str(bad.slice(0, 3))])
+		_expect(spots.size() >= 12 and high > 0, "arena %d: spots vary (%d different, %d on platforms)" % [arena, spots.size(), high])
+		# chỗ xấu bị từ chối
+		var rows := br.level.rows
+		var bad_ok := true
+		var bad_where := ""
+		for r in rows.size():
+			for c in range(1, rows[r].length() - 1):
+				if r < 2:
+					continue
+				var pos := Vector2((c + 0.5) * 32.0, r * 32.0 - BrawlItems.BOX_LIFT)
+				var mine := it.is_valid_spot(pos)
+				var theirs := _spot_problem(br, pos) == ""
+				if mine != theirs:
+					bad_ok = false
+					bad_where = "%d,%d" % [r, c]
+		_expect(bad_ok, "arena %d: is_valid_spot agrees with the map on every cell (%s)" % [arena, bad_where])
+		_expect(not it.is_valid_spot(Vector2(640, 600)) and not it.is_valid_spot(br.spawn_points[0]) and not it.is_valid_spot(Vector2(100, 100)), "arena %d: a pit, a spawn cell and mid-air are rejected" % arena)
+		br.queue_free()
+		await _frames(2)
+
+	# --- Hộp không nằm trên gai chống câu giờ ---
+	br = await _item_br(0)
+	it = br.items
+	var near_spike := Vector2(112.0, 640.0 - BrawlItems.BOX_LIFT)   # cột 3 hàng 19 là chỗ xuất phát: dùng cột 5
+	near_spike = Vector2(5.5 * 32.0, 640.0 - BrawlItems.BOX_LIFT)
+	_expect(it.is_valid_spot(near_spike), "a floor spot is fine before the stall spikes grow")
+	br._add_stall_spike(5)
+	_expect(not it.is_valid_spot(near_spike), "a spot on a stall spike is rejected")
+	var doomed = it.spawn_box("gun", near_spike + Vector2(-64, 0))
+	br._add_stall_spike(4)
+	await _frames(3)
+	_expect(not it.boxes.has(doomed), "a box that ends up on a fresh stall spike is removed")
+	for s in br.stall_spikes:
+		s.queue_free()
+	br.queue_free()
+	await _frames(2)
+
+	# --- Nhặt: chỉ khi tay trống; người kia nhặt được ---
+	br = await _item_br(0)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	it.give(a, "banana")
+	var full_box = it.spawn_box("swap", a.global_position + Vector2(0, -7))
+	await _frames(5)
+	_expect(it.held[0] == "banana" and it.boxes.has(full_box), "a full hand cannot pick up another item (box stays)")
+	var theirs_box = it.spawn_box("spring", b.global_position + Vector2(0, -7))
+	await _frames(5)
+	_expect(it.held[1] == "spring" and not it.boxes.has(theirs_box) and it.held[0] == "banana", "the other player (empty hand) picks up their own box")
+	a.dead = true
+	it.held[0] = ""
+	await _frames(3)
+	_expect(it.held[0] == "" and it.boxes.has(full_box), "a dead ball cannot pick up a box")
+	a.dead = false
+	await _frames(3)
+	_expect(it.held[0] == "swap", "...and picks it up as soon as it is alive and empty-handed again")
+	br.queue_free()
+	await _frames(2)
+
+	# --- GUN: 3 phát, đạn đẩy đối thủ chứ không đẩy người bắn, không gây sát thương ---
+	br = await _item_br(0)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	var used := []
+	it.item_used.connect(func(ball: Ball, id: String) -> void: used.append([ball, id]))
+	it.give(a, "gun")
+	_expect(it.held[0] == "gun" and a.ammo == 3 and a.bullet_knockback > 0.0 and br.hud.item_ids[0] == "gun", "GUN: 3 shots of pushing bullets, shown on the HUD")
+	await _item_place(a, Vector2(60, gy))
+	await _item_place(b, Vector2(100, gy))
+	a.facing = 1
+	var a_x0 := a.global_position.x
+	var b_x0 := b.global_position.x
+	var peak_vx := 0.0
+	var a_peak := 0.0
+	it.use(a)
+	_expect(a.ammo == 2 and it.held[0] == "gun" and used.size() == 1, "GUN: one press fires one shot (2 left)")
+	it.use(a)                                        # bấm lại ngay: súng đang chờ giữa hai phát
+	_expect(a.ammo == 2, "GUN: pressing again during the cooldown does not waste a shot")
+	for i in 60:
+		await _frames(1)
+		peak_vx = maxf(peak_vx, b.linear_velocity.x)
+		a_peak = maxf(a_peak, absf(a.linear_velocity.x))
+	var shoved := b.global_position.x - b_x0
+	print("    (gun: victim peak vx %.0f, shoved %.0f px, shooter moved %.1f px, peak vx %.0f)" % [peak_vx, shoved, a.global_position.x - a_x0, a_peak])
+	_expect(peak_vx > 450.0 and shoved > 120.0, "GUN: the bullet shoves the opponent hard (peak vx %.0f, moved %.0f px)" % [peak_vx, shoved])
+	_expect(absf(a.global_position.x - a_x0) < 6.0 and a_peak < 60.0, "GUN: the shooter is not pushed")
+	_expect(br.scores == [0, 0] and not b.dead and not a.dead, "GUN: a hit never hurts anyone (score %s)" % str(br.scores))
+	a.facing = -1                                   # hai phát sau bắn vào tường bên trái, khỏi đẩy b vào gai
+	await _item_place(b, Vector2(100, gy))
+	it.use(a)
+	await _frames(14)
+	it.use(a)
+	_expect(a.ammo == 0 and it.held[0] == "" and a.bullet_knockback == 0.0 and used.size() == 3 and br.hud.item_ids[0] == "", "GUN: the third shot empties the hand and the gun mode is gone (used %d times)" % used.size())
+	await _frames(14)
+	it.use(a)
+	_expect(used.size() == 3 and a.ammo == 0, "GUN: no fourth shot")
+	# đạn đẩy xuống vực khi đứng sát mép
+	await _item_place(b, Vector2(720, gy))
+	await _item_place(a, Vector2(752, gy))
+	a.facing = -1
+	it.give(a, "gun")
+	var kills := []
+	br.point_scored.connect(func(scorer: Ball, victim: Ball, cause: String) -> void: kills.append([scorer, victim, cause]))
+	it.use(a)
+	await _frames(100)
+	print("    (gun at the edge: %s)" % str(kills))
+	_expect(kills.size() == 1 and kills[0][1] == b and kills[0][2] == "pit" and br.scores == [1, 0], "GUN: a hit near a pit edge can push the opponent into the pit (score %s)" % str(br.scores))
+	br.queue_free()
+	await _frames(2)
+
+	# --- BANANA: đối thủ bị đảo phím có thời hạn, có hình báo hiệu, dọn sạch ---
+	br = await _item_br(0)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	it.banana_seconds = 0.6
+	it.give(a, "banana")
+	it.use(a)
+	await _frames(2)
+	_expect(b.reverse_controls and not a.reverse_controls and it.held[0] == "" and _count_children(b, BrawlItems.BananaMark) == 1 and _count_children(a, BrawlItems.BananaMark) == 0, "BANANA: the opponent is reversed (the thrower is not) and wears a banana mark")
+	_expect(br.hud.message_label.text.begins_with("BANANA!") and br.hud.message_label.modulate.a > 0.5, "BANANA: the HUD announces it ('%s')" % br.hud.message_label.text)
+	Input.action_press("p2_left")
+	await _frames(12)
+	_expect(b.charge_dir == 1, "BANANA: the victim holding LEFT charges RIGHT (%d)" % b.charge_dir)
+	_release_all_keys()
+	await _frames(45)                                # 0.6 giây hết giờ
+	_expect(not b.reverse_controls and _count_children(b, BrawlItems.BananaMark) == 0, "BANANA: ends by itself, the keys are normal and the mark is gone")
+	Input.action_press("p2_left")
+	await _frames(12)
+	_expect(b.charge_dir == -1, "BANANA: after it ends LEFT charges left again")
+	_release_all_keys()
+	# đối thủ đang chết: không ném được, chuối còn trong tay
+	await _frames(5)
+	it.give(a, "banana")
+	b.dead = true
+	it.use(a)
+	_expect(it.held[0] == "banana" and not b.reverse_controls, "BANANA: cannot be thrown at a dead opponent (item kept)")
+	b.dead = false
+	br.queue_free()
+	await _frames(2)
+
+	# --- CHUỐI + sự kiện REVERSED KEYS: hai thứ tự, cái nào hết trước cũng đúng ---
+	br = await _item_br(0, 0.3, false, true)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	var ev := br.events
+	ev.reversed_keys_seconds = 30.0
+	# thứ tự 1: sự kiện trước, chuối sau; sự kiện hết trước
+	ev.start_event("reversed_keys")
+	it.banana_seconds = 1.0
+	it.give(a, "banana")
+	it.use(a)
+	await _frames(2)
+	_expect(a.reverse_controls and b.reverse_controls, "REVERSED KEYS then BANANA: both reversed")
+	ev.stop_event()
+	await _frames(2)
+	_expect(b.reverse_controls and not a.reverse_controls, "...the event ends first: only the banana victim stays reversed")
+	await _frames(70)
+	_expect(not a.reverse_controls and not b.reverse_controls and _count_children(b, BrawlItems.BananaMark) == 0, "...then the banana ends: nobody is reversed")
+	# thứ tự 2: chuối trước, sự kiện sau; chuối hết trước
+	it.banana_seconds = 1.0
+	it.give(a, "banana")
+	it.use(a)
+	await _frames(2)
+	ev.start_event("reversed_keys")
+	await _frames(2)
+	_expect(a.reverse_controls and b.reverse_controls, "BANANA then REVERSED KEYS: both reversed")
+	await _frames(70)
+	_expect(a.reverse_controls and b.reverse_controls, "...the banana ends first: both are still reversed by the event (the victim is not un-reversed)")
+	ev.stop_event()
+	await _frames(2)
+	_expect(not a.reverse_controls and not b.reverse_controls, "...the event ends: nobody is stuck reversed")
+	# thứ tự 3: chuối trước, sự kiện bắt đầu và hết trong lúc chuối còn
+	it.banana_seconds = 1.5
+	it.give(a, "banana")
+	it.use(a)
+	ev.start_event("reversed_keys")
+	await _frames(2)
+	ev.stop_event()
+	await _frames(2)
+	_expect(b.reverse_controls and not a.reverse_controls, "BANANA, event starts and ends meanwhile: the victim is still reversed by the banana, the other is normal")
+	await _frames(110)
+	_expect(not b.reverse_controls and not a.reverse_controls, "...and the banana ending leaves everyone normal")
+	# nạn nhân chết giữa chuối + sự kiện
+	it.banana_seconds = 5.0
+	it.give(a, "banana")
+	it.use(a)
+	ev.start_event("reversed_keys")
+	await _frames(2)
+	br.kill(b, "pit")                                # b chết: hết chuối, nhưng sự kiện vẫn đang chạy
+	await _frames(2)
+	_expect(_count_children(b, BrawlItems.BananaMark) == 0 and b.reverse_controls, "the victim dying ends the banana, the event still reverses it")
+	await _frames(50)
+	_expect(not b.dead and b.reverse_controls and a.reverse_controls, "the respawned victim is reversed by the event only")
+	ev.stop_event()
+	await _frames(2)
+	_expect(not a.reverse_controls and not b.reverse_controls, "everything is back to normal when the event ends")
+	br.queue_free()
+	await _frames(2)
+
+	# --- SWAP: đổi chỗ và vận tốc ---
+	br = await _item_br(0)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	a.teleport(Vector2(300, 300))
+	b.teleport(Vector2(900, 250))
+	await _frames(3)
+	a.linear_velocity = Vector2(120, 0)
+	b.linear_velocity = Vector2(-60, 0)
+	await _frames(1)
+	var pa := a.global_position
+	var pb := b.global_position
+	var va := a.linear_velocity.x
+	var vb := b.linear_velocity.x
+	it.give(b, "swap")
+	it.use(b)
+	await _frames(4)
+	_expect(a.global_position.distance_to(pb) < 40.0 and b.global_position.distance_to(pa) < 40.0, "SWAP: the two players traded places (P1 %s -> %s)" % [pa.round(), a.global_position.round()])
+	_expect(absf(a.linear_velocity.x - vb) < 25.0 and absf(b.linear_velocity.x - va) < 25.0 and it.held[1] == "", "SWAP: velocities traded too, the item is used up")
+	b.dead = true
+	it.give(a, "swap")
+	it.use(a)
+	_expect(it.held[0] == "swap", "SWAP: not usable while the opponent is dead (item kept)")
+	b.dead = false
+	br.queue_free()
+	await _frames(2)
+
+	# --- SPRING TRAP ---
+	br = await _item_br(0)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	it.give(a, "spring")
+	await _item_place(a, Vector2(150, gy))
+	it.use(a)
+	_expect(it.held[0] == "" and it.traps.size() == 1, "SPRING: using it drops one trap and empties the hand")
+	var trap = it.traps[0]
+	_expect(absf(trap.position.x - a.global_position.x) < 4.0 and absf(trap.position.y - ground) < 2.0 and not trap.armed, "SPRING: the trap lies at the user's feet on the ground and is not armed yet (%s)" % trap.position)
+	await _frames(15)                                # 0,25 giây, chưa lên cò: bóng đứng trên bẫy vẫn đứng yên
+	_expect(a.global_position.y > gy - 3.0 and it.traps.size() == 1 and not trap.armed, "SPRING: an unarmed trap does nothing")
+	a.teleport(Vector2(220, gy))                     # chủ bước ra xa trước khi lên cò
+	await _frames(25)
+	_expect(trap.armed and it.traps.size() == 1, "SPRING: the trap arms after about half a second")
+	var sprung := []
+	it.trap_sprung.connect(func(ball: Ball) -> void: sprung.append(ball))
+	await _item_place(b, Vector2(trap.position.x, gy), 1)   # đối thủ giẫm lên
+	var apex := gy
+	for i in 80:
+		await _frames(1)
+		apex = minf(apex, b.global_position.y)
+	print("    (spring: launched %.0f px high)" % (gy - apex))
+	_expect(sprung.size() == 1 and sprung[0] == b and gy - apex > 400.0, "SPRING: the armed trap launches whoever touches it high into the air (%.0f px)" % (gy - apex))
+	_expect(it.traps.is_empty() and (not is_instance_valid(trap) or trap.get_parent() == null), "SPRING: the trap disappears after it fired")
+	print("    (a normal full jump rises about %.0f px)" % (pow(a.max_speed, 2) / (2.0 * 1400.0)))
+	# chủ cũng bị bắn
+	await _item_place(b, Vector2(1000, gy))
+	await _item_place(a, Vector2(100, gy))
+	it.give(a, "spring")
+	it.use(a)
+	await _frames(26)                                # a vẫn đứng ngay trên bẫy; lên cò sau 30 khung
+	apex = gy
+	for i in 60:
+		await _frames(1)
+		apex = minf(apex, a.global_position.y)
+	_expect(sprung.size() == 2 and sprung[1] == a and gy - apex > 400.0, "SPRING: the owner is launched too when still standing on it (%.0f px)" % (gy - apex))
+	# tự biến mất
+	await _item_place(b, Vector2(1000, gy))
+	await _item_place(a, Vector2(300, gy))
+	await _frames(100)                               # chờ chủ rơi xuống lại
+	it.spring_life_seconds = 1.0
+	await _item_place(a, Vector2(150, gy))
+	it.give(a, "spring")
+	it.use(a)
+	await _item_place(a, Vector2(260, gy), 1)
+	_expect(it.traps.size() == 1, "SPRING: a trap is waiting (life 1 s for the test)")
+	await _frames(80)
+	_expect(it.traps.is_empty() and sprung.size() == 2, "SPRING: an untouched trap disappears on its own after its lifetime")
+	# không có đất dưới chân: không thả được
+	it.give(a, "spring")
+	a.teleport(Vector2(640, 500))                    # giữa vực, dưới bệ giữa
+	await _frames(2)
+	it.use(a)
+	_expect(it.held[0] == "spring" and it.traps.is_empty(), "SPRING: cannot be dropped over a pit (item kept)")
+	br.queue_free()
+	await _frames(2)
+
+	# --- Mất vật phẩm khi chết, hiệu ứng dọn khi chết và hồi sinh ---
+	br = await _item_br(0, 0.3, false, true)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	it.give(a, "gun")
+	it.give(b, "spring")
+	it.banana_seconds = 5.0
+	var thrower_item := "banana"
+	it.give(a, thrower_item)                         # a cầm chuối thay súng
+	_expect(a.ammo == 0 and a.bullet_knockback == 0.0, "replacing a gun with another item drops the gun's ammo")
+	it.use(a)                                        # b bị chuối
+	it.give(a, "gun")
+	await _frames(2)
+	_expect(b.reverse_controls and it.held[1] == "spring" and it.held[0] == "gun", "(setup) P2 is bananaed and holds a spring, P1 holds a gun")
+	br.kill(b, "pit")
+	await _frames(2)
+	_expect(it.held[1] == "" and not b.reverse_controls and _count_children(b, BrawlItems.BananaMark) == 0 and br.hud.item_ids[1] == "", "dying loses the held item and ends the banana at once")
+	_expect(it.held[0] == "gun" and a.ammo == 3, "the other player keeps their gun")
+	await _frames(50)
+	_expect(not b.dead and it.held[1] == "" and not b.reverse_controls and b.ammo == 0, "after the respawn nothing is left over")
+	br.kill(a, "pit")
+	await _frames(2)
+	_expect(it.held[0] == "" and a.ammo == 0 and a.bullet_knockback == 0.0 and br.hud.item_ids[0] == "", "a dead gun owner loses the gun and its ammo")
+	await _frames(50)
+	br.queue_free()
+	await _frames(2)
+
+	# --- Hết trận: dọn hộp, bẫy, vật phẩm, hiệu ứng; không sinh gì thêm ---
+	br = await _item_br(0, 0.3, false, true)
+	it = br.items
+	a = br.balls[0]
+	b = br.balls[1]
+	it.banana_seconds = 20.0
+	it.give(b, "banana")
+	it.use(b)                                        # a bị chuối
+	it.give(b, "gun")
+	await _item_place(a, Vector2(150, gy), 1)
+	it.give(a, "spring")
+	it.use(a)
+	it.spawn_box("swap")
+	it.spawn_box("gun")
+	await _frames(2)
+	_expect(it.boxes.size() == 2 and it.traps.size() == 1 and a.reverse_controls and it.held[1] == "gun", "(setup) boxes, a trap, a banana and a held gun exist")
+	br.scores[1] = Brawl.WIN_SCORE - 1
+	br.kill(a, "pit")
+	await _frames(3)
+	_expect(not br.match_running and it.boxes.is_empty() and it.traps.is_empty() and it.held == ["", ""] and not a.reverse_controls and b.ammo == 0 and b.bullet_knockback == 0.0 and _count_children(a, BrawlItems.BananaMark) == 0 and br.hud.item_ids == ["", ""], "match end clears boxes, traps, held items and every effect")
+	it.enabled = true
+	it.first_delay = 0.0
+	it.give(b, "gun")
+	await _frames(40)
+	_expect(it.spawn_box() == null and it.boxes.is_empty() and it.held == ["", ""], "after the match nothing spawns and nothing can be given")
+	br.queue_free()
+	await _frames(2)
+
+	# --- Vương miện người dẫn điểm ---
+	br = await _item_br(0)
+	a = br.balls[0]
+	b = br.balls[1]
+	_expect(br.leader == null and a.size_factor == 1.0 and b.size_factor == 1.0 and _count_children(a, Brawl.CrownMarker) == 0, "crown: 0-0 means nobody is the leader")
+	br.kill(b, "pit")
+	await _frames(3)
+	_expect(br.leader == a and is_equal_approx(a.size_factor, 1.25) and is_equal_approx(a.radius, 18.75) and _count_children(a, Brawl.CrownMarker) == 1 and _count_children(b, Brawl.CrownMarker) == 0 and b.size_factor == 1.0, "crown: the player with more points wears it and is 25% bigger")
+	_expect(is_equal_approx((a.get_node("Shape") as CollisionShape2D).shape.radius, 18.75), "crown: the collision circle grew too")
+	var crown: Node2D = a.find_children("*", "Node2D", false, false).filter(func(n: Node) -> bool: return n is Brawl.CrownMarker)[0]
+	_expect(crown.position.y < -50.0 and crown.visible, "crown: it floats over the leader's head (y %.0f)" % crown.position.y)
+	await _frames(50)                                # b hồi sinh
+	br.kill(a, "pit")                                # 1-1: hoà
+	await _frames(3)
+	_expect(br.leader == null and a.size_factor == 1.0 and b.size_factor == 1.0 and _count_children(a, Brawl.CrownMarker) == 0 and _count_children(b, Brawl.CrownMarker) == 0, "crown: a tie means nobody has the crown or the size")
+	await _frames(50)
+	br.kill(a, "pit")                                # 1-2: b dẫn
+	await _frames(3)
+	_expect(br.leader == b and is_equal_approx(b.size_factor, 1.25) and a.size_factor == 1.0 and _count_children(b, Brawl.CrownMarker) == 1 and _count_children(a, Brawl.CrownMarker) == 0, "crown: when the lead changes the crown moves to the new leader")
+	await _frames(50)
+	# lãnh đạo chết mà vẫn dẫn: hồi sinh to và đội vương miện, đứng vững trên đất
+	br.scores[1] = 3
+	await _frames(2)
+	br.kill(b, "pit")                                # P1 ghi: điểm [2,3], b vẫn dẫn
+	await _frames(2)
+	_expect(br.leader == b and b.dead, "crown: the leader dying while still ahead keeps the crown (scores %s)" % str(br.scores))
+	await _frames(80)
+	var top := 9999.0
+	var bot := -9999.0
+	for i in 40:
+		await _frames(1)
+		top = minf(top, b.global_position.y)
+		bot = maxf(bot, b.global_position.y)
+	_expect(not b.dead and br.leader == b and is_equal_approx(b.size_factor, 1.25) and _count_children(b, Brawl.CrownMarker) == 1 and b.visible, "crown: the leader respawns still big and crowned")
+	_expect(absf(top - (ground - 18.75)) < 3.0 and absf(bot - (ground - 18.75)) < 3.0, "crown: the respawned big leader stands on the ground, no sinking or popping (y %.1f..%.1f, expected %.1f)" % [top, bot, ground - 18.75])
+	# cùng sự kiện SUPER BOUNCE, SWAP!, HOT POTATO
+	br.events.start_event("super_bounce")
+	await _frames(30)
+	_expect(br.leader == b and is_equal_approx(b.size_factor, 1.25) and b.physics_material_override.bounce > 0.9 and _count_children(b, Brawl.CrownMarker) == 1, "crown: SUPER BOUNCE leaves the size and crown alone")
+	br.events.stop_event()
+	await _frames(30)
+	var pos_b := b.global_position
+	var pos_a := a.global_position
+	br.events.start_event("swap")
+	var min_y := 9999.0
+	for i in 45:
+		await _frames(1)
+		min_y = minf(min_y, b.global_position.y)
+		min_y = minf(min_y, a.global_position.y)
+	_expect(b.global_position.distance_to(pos_a) < 50.0 and a.global_position.distance_to(pos_b) < 50.0 and min_y > ground - 40.0 and b.on_ground and a.on_ground, "crown: SWAP! with a big leader: both land on the ground without sinking or popping up (min y %.0f)" % min_y)
+	br.events.hot_potato_seconds = 10.0
+	br.events.start_event("hot_potato")
+	await _frames(3)
+	var carrier := br.events.bomb_carrier
+	var crown_y := -9999.0
+	for cm in br.leader.get_children():
+		if cm is Brawl.CrownMarker:
+			crown_y = cm.position.y
+	if carrier == br.leader:
+		_expect(crown_y < -110.0, "crown: the leader carrying the HOT POTATO bomb wears the crown above the bomb (y %.0f)" % crown_y)
+	else:
+		_expect(crown_y > -90.0, "crown: the leader not carrying the bomb keeps the crown on the head (y %.0f)" % crown_y)
+	br.events.stop_event()
+	# hết trận: bỏ vương miện và cỡ
+	br.scores[0] = Brawl.WIN_SCORE - 1
+	br.scores[1] = 0
+	await _frames(2)
+	br.kill(b, "pit")
+	await _frames(3)
+	_expect(not br.match_running and br.leader == null and a.size_factor == 1.0 and b.size_factor == 1.0 and _count_children(a, Brawl.CrownMarker) == 0 and _count_children(b, Brawl.CrownMarker) == 0, "crown: cleared at match end (both back to normal size)")
+	br.queue_free()
+	await _frames(2)
+
+	# --- Câu châm chọc ---
+	var font := UiTheme.main_font()
+	var widest := 0.0
+	var widest_line := ""
+	var all_ok := true
+	var short_ok := true
+	for cause in ["stomp", "pit", "spikes", "bomb", "default"]:
+		var pool: Array = BrawlData.TAUNTS[cause]
+		var distinct := {}
+		for line in pool:
+			distinct[line] = true
+			for pair in [[1, 2], [2, 1]]:
+				var text := String(line).format({"s": "P%d" % pair[0], "v": "P%d" % pair[1]})
+				var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_LARGE).x
+				if w > widest:
+					widest = w
+					widest_line = text
+				if w > 1000.0 or text.contains("{") or text != text.to_ascii_buffer().get_string_from_ascii() or text.length() > 40:
+					short_ok = false
+		_expect(pool.size() >= 5 and distinct.size() == pool.size(), "taunts '%s': %d different lines (>= 5)" % [cause, pool.size()])
+	_expect(short_ok, "taunts: every line (with P1 / P2) is ASCII and fits in 1000 px at FONT_LARGE on one line (widest %.0f px: '%s')" % [widest, widest_line])
+	br = await _item_br(0)
+	a = br.balls[0]
+	b = br.balls[1]
+	for cause in ["stomp", "pit", "spikes", "bomb", "other"]:
+		var seen := {}
+		var repeat := false
+		var last := ""
+		for i in 300:
+			var text := br._point_text(a if i % 2 == 0 else b, b if i % 2 == 0 else a, cause)
+			var s_id := 1 if i % 2 == 0 else 2
+			if text == last:
+				repeat = true
+			last = text
+			seen[text] = true
+			if not text in _taunt_options(cause, s_id, 3 - s_id):
+				repeat = true
+		var expected_total: int = BrawlData.TAUNTS.get(cause, BrawlData.TAUNTS["default"]).size() * 2
+		_expect(not repeat and seen.size() >= expected_total - 2, "taunts '%s': 300 picks never repeat back to back, use the right names and cover the pool (%d of %d texts)" % [cause, seen.size(), expected_total])
+	await _frames(50)
+	br.kill(b, "pit")
+	_expect(br.hud.message_label.text in _taunt_options("pit", 1, 2), "taunts: a real pit point shows one of the pit lines ('%s')" % br.hud.message_label.text)
+	await _frames(50)
+	br.kill(a, "spikes")
+	_expect(br.hud.message_label.text in _taunt_options("spikes", 2, 1), "taunts: a real spikes point shows one of the spikes lines ('%s')" % br.hud.message_label.text)
+	br.queue_free()
+	await _frames(2)
+
+
+## Chế độ đấu có sẵn: dựng, chờ hết giới thiệu (hộp vật phẩm tự sinh tắt trừ khi `with_items`).
+func _item_br(arena := 0, intro := 0.3, with_items := false, with_events := false) -> Brawl:
+	var br := await _make_brawl(arena, intro, with_events, with_items)
+	await _brawl_ready(br)
+	return br
+
+
+## Số node con của `node` thuộc lớp `type` (không tính cái đang chờ xoá).
+func _count_children(node: Node, type: Variant) -> int:
+	var n := 0
+	for c in node.get_children():
+		if is_instance_of(c, type) and not c.is_queued_for_deletion():
+			n += 1
+	return n
 
 
 ## Hệ số phóng của node Sprite (x), để so với pixel_scale * kích thước.

@@ -17,6 +17,34 @@ const COLS := 40                       # số cột của đấu trường
 const ROWS := 22                       # số hàng của đấu trường
 const PLAYER2_CHAR := "P"              # ký tự chỗ xuất phát của người chơi 2
 
+## Câu châm chọc hiện giữa trên màn hình mỗi khi có điểm, bốc ngẫu nhiên theo nguyên nhân (Brawl._point_text).
+## {s} = tên người ghi điểm (P1 / P2), {v} = tên nạn nhân. Chỉ chữ ASCII, ngắn gọn (có bài test đo bề rộng ở cỡ chữ lớn).
+## Muốn thêm câu: chép một dòng vào đúng nhóm. "default" dùng cho nguyên nhân lạ (sự kiện, vật phẩm...).
+const TAUNTS := {
+	"stomp": [
+		"{s} STOMPS {v}!", "{s} FLATTENED {v}!", "{v} IS NOW A PANCAKE!", "{s} SAT ON {v}'S HEAD!",
+		"{v} GOT SQUASHED!", "NICE HEAD, {v}! SO BOUNCY!", "{s} USED {v} AS A TRAMPOLINE!", "{v} GOT PRESSED FLAT!",
+		"STOMP! {v} IS PANCAKE!",
+	],
+	"pit": [
+		"{v} FELL IN!", "{v} FORGOT HOW TO JUMP!", "{v} FOUND THE BOTTOM!", "BYE BYE, {v}!",
+		"{v} SAYS HI TO THE VOID!", "THE PIT LOVES {v}!", "MIND THE GAP, {v}!", "{s} WAVES BYE TO {v}!",
+		"{v} TOOK THE FAST WAY DOWN!",
+	],
+	"spikes": [
+		"{v} GOT SPIKED!", "OUCH! {v} MEETS THE SPIKES!", "{v} DID NOT SEE THE SPIKES!", "{v} IS A PINCUSHION NOW!",
+		"{v} POPPED LIKE A BALLOON!", "{s} THANKS THE SPIKES!", "SPIKES 1, {v} 0!", "{v} SAT ON A PORCUPINE!",
+	],
+	"bomb": [
+		"{v} WENT BOOM!", "{v} GOT TOO HOT TO HANDLE!", "{v} IS TOAST!", "HOT POTATO! {v} IS WELL DONE!",
+		"{v} BLEW IT!", "{s} SAYS: BOOM, {v}!", "{v} EXPLODED WITH JOY!", "BOOM! SEE YA, {v}!",
+	],
+	"default": [
+		"{s} SCORES!", "{s} TAKES A POINT!", "POINT FOR {s}!", "{s} IS ON FIRE!",
+		"{s} MAKES IT LOOK EASY!", "{v} MESSED UP BIG TIME!", "NICE ONE, {s}!", "{v} TRIPPED OVER NOTHING!",
+	],
+}
+
 const ARENAS := [
 	# vực to ở giữa, bệ cao ở giữa có gai treo bên dưới, hai lò xo bắn lên bệ
 	{"name": "Center Pit", "map": r"""

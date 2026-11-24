@@ -284,19 +284,26 @@ func _on_point_scored(_scorer: Ball, victim: Ball, cause: String) -> void:
 # ---- SWAP! ----
 
 ## Hai người chơi đổi chỗ cho nhau (vị trí và vận tốc). Bỏ qua nếu một người đang chết (đang chờ hồi sinh).
-func _do_swap() -> void:
+## Công khai: vật phẩm SWAP (BrawlItems) cũng gọi hàm này, nên chỉ có MỘT chỗ giữ trạng thái "trả vận tốc sau 2 khung".
+## Trả về true nếu đã đổi chỗ.
+func swap_players() -> bool:
+	return _do_swap()                             # dùng chung với SWAP! của sự kiện
+
+
+func _do_swap() -> bool:
 	var a := brawl.balls[0]                       # người chơi 1
 	var b := brawl.balls[1]                       # người chơi 2
 	if a.dead or b.dead:                          # một người đang chờ hồi sinh: không có gì để đổi
-		return
-	var pos_a := a.global_position                # chỗ cũ của người chơi 1
-	var pos_b := b.global_position                # chỗ cũ của người chơi 2
+		return false
+	var pos_a := a.global_position               # chỗ cũ của người chơi 1
+	var pos_b := b.global_position               # chỗ cũ của người chơi 2
 	_swap_velocities = [b.linear_velocity, a.linear_velocity]   # mỗi người nhận vận tốc của người kia
 	_burst(pos_a, BrawlHud.PLAYER_COLORS[0], 14, 80.0, 220.0, 0.45)   # tia sáng ở chỗ cũ của người chơi 1
 	_burst(pos_b, BrawlHud.PLAYER_COLORS[1], 14, 80.0, 220.0, 0.45)   # tia sáng ở chỗ cũ của người chơi 2
-	a.teleport(pos_b)                             # dịch người chơi 1 sang chỗ người chơi 2 (teleport xoá vận tốc)
-	b.teleport(pos_a)                             # và ngược lại
+	a.teleport(pos_b + Vector2(0.0, b.radius - a.radius))   # dịch người chơi 1 sang chỗ người chơi 2 (teleport xoá vận tốc); chân giữ nguyên độ cao dù hai bóng khác cỡ (người dẫn điểm to hơn)
+	b.teleport(pos_a + Vector2(0.0, a.radius - b.radius))   # và ngược lại
 	_swap_wait = 2                                # 2 khung nữa vật lý đã dịch xong thì trả vận tốc
+	return true                                   # đã đổi
 
 
 # ---- HOT POTATO ----

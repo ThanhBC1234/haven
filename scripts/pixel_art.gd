@@ -156,6 +156,21 @@ const SPRING := [
 	"kGGGGGGGGk",
 ]
 
+# Hộp vật phẩm bí ẩn 11 x 11 (khối vàng viền tối, dấu "?" tối ở giữa).
+const ITEM_BOX := [
+	"kkkkkkkkkkk",
+	"kwyyyyyyyYk",
+	"kyyykkkyyYk",
+	"kyykyyykyYk",
+	"kyyyyyykyYk",
+	"kyyyykkyyYk",
+	"kyyyykyyyYk",
+	"kyyyyyyyyYk",
+	"kyyyykyyyYk",
+	"kYYYYYYYYYk",
+	"kkkkkkkkkkk",
+]
+
 # Neo tàu 9 x 11 (vòng trên, thân dọc, xà ngang, đáy cong lên hai mỏ nhọn).
 const ANCHOR := [
 	"...kkk...",

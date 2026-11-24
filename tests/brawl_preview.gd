@@ -1,6 +1,7 @@
 extends Node
 ## Chụp chế độ đấu 2 người. Chạy có cửa sổ: godot --path . res://tests/brawl_preview.tscn -- --shots=<thư mục>
-## Ảnh: từng đấu trường lúc bắt đầu (READY...), giữa trận có điểm (người bị dẫm đang dẹt), gai chống câu giờ, bảng thắng.
+## Ảnh: từng đấu trường lúc bắt đầu (READY...), giữa trận có điểm (người bị dẫm đang dẹt), gai chống câu giờ, bảng thắng,
+## sự kiện ngẫu nhiên, vật phẩm troll (hộp, từng món trong tay, chuối, bẫy lò xo), vương miện người dẫn điểm, câu châm chọc dài nhất.
 
 var dir := ""
 
@@ -42,6 +43,7 @@ func _ready() -> void:
 		brawl.queue_free()
 		await _frames(3)
 		await _event_shots(i)                        # banner roulette, sự kiện đang chạy (sàn băng), bom HOT POTATO
+		await _item_shots(i)                         # vật phẩm troll, vương miện, câu châm chọc
 	get_tree().quit()
 
 
@@ -107,3 +109,63 @@ func _shot(shot_name: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	if dir != "" and img:
 		img.save_png(dir.path_join(shot_name + ".png"))
+
+
+## Ảnh vật phẩm troll, vương miện người dẫn điểm và câu châm chọc dài nhất:
+## hộp "?" trên sân, mỗi vật phẩm trong tay (hiện ở ô cạnh điểm), chuối trên nạn nhân, bẫy lò xo, người dẫn điểm to + vương miện, câu dài nhất.
+func _item_shots(index: int) -> void:
+	var brawl := await _start(index)
+	brawl.events.enabled = false
+	brawl.items.enabled = false                      # hộp chỉ mọc khi ta gọi spawn_box
+	await _wait_match(brawl)
+	await _frames(40)
+	var it := brawl.items
+	var a := brawl.balls[0]
+	var b := brawl.balls[1]
+	it.spawn_box("gun")
+	it.spawn_box("banana")
+	await _frames(50)
+	await _shot("arena%d_items_boxes" % index)       # hai hộp "?" trên sân
+	for bx in it.boxes.duplicate():
+		it.boxes.erase(bx)
+		bx.queue_free()
+	var others := {"gun": "spring", "banana": "swap", "swap": "gun", "spring": "banana"}   # người chơi 2 cầm món khác để thấy cả hai ô
+	for id in BrawlItems.ITEM_IDS:
+		it.give(a, id)
+		it.give(b, others[id])
+		await _frames(6)
+		await _shot("arena%d_item_%s" % [index, id])  # P1 cầm `id`, P2 cầm món khác
+	it.give(a, "banana")
+	it.give(b, "banana")
+	it.banana_seconds = 6.0
+	it.use(a)                                        # P2 bị chuối
+	await _frames(25)
+	await _shot("arena%d_item_banana_effect" % index)
+	it.give(b, "spring")
+	it.use(b)                                        # P2 thả bẫy lò xo (còn bị chuối)
+	b.teleport(b.global_position + Vector2(-110, 0)) # bước ra khỏi bẫy
+	await _frames(45)
+	await _shot("arena%d_item_spring_trap" % index)  # bẫy đã lên cò
+	for trap in it.traps.duplicate():                # dọn bẫy (P2 hồi sinh đúng chỗ bẫy sẽ bị bắn bay mất)
+		it.traps.erase(trap)
+		trap.queue_free()
+	brawl.kill(b, "pit")                             # P1 ghi điểm: dẫn 1-0, to hơn và đội vương miện
+	await _frames(90)                                # P2 hồi sinh
+	await _shot("arena%d_crown_leader" % index)
+	var font := UiTheme.main_font()                  # tìm câu châm chọc dài nhất (khi đã thay tên P1 / P2)
+	var widest := ""
+	var widest_w := 0.0
+	for cause in BrawlData.TAUNTS:
+		for line in BrawlData.TAUNTS[cause]:
+			for pair in [[1, 2], [2, 1]]:
+				var text := String(line).format({"s": "P%d" % pair[0], "v": "P%d" % pair[1]})
+				var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_LARGE).x
+				if w > widest_w:
+					widest_w = w
+					widest = text
+	print("longest taunt: '%s' %.0f px at FONT_LARGE" % [widest, widest_w])
+	brawl.hud.flash(widest, 6.0, BrawlHud.PLAYER_COLORS[0])
+	await _frames(5)
+	await _shot("arena%d_taunt_longest" % index)
+	brawl.queue_free()
+	await _frames(3)

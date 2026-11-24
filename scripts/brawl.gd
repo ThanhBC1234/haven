@@ -13,6 +13,9 @@ extends Node2D                          # cảnh chế độ đấu 2 người (
 ##   match_running = false khi đang giới thiệu (READY...), khi trận đã kết thúc; chỉ khi true mới có điểm
 ##   tín hiệu: point_scored(scorer, victim, cause), match_started, match_over(winner), player_respawned(ball)
 ##   events (BrawlEvents) = sự kiện ngẫu nhiên: events.start_event(id), events.stop_event(), events.active_event, events.enabled...
+##   items (BrawlItems) = vật phẩm troll: items.held, items.give(ball, id), items.use(ball), items.spawn_box(), items.enabled...
+##   leader = người dẫn điểm (null khi hoà): đội vương miện và to hơn 25% (LEADER_SCALE), nên dễ bị dẫm hơn
+##   Câu châm chọc khi có điểm: BrawlData.TAUNTS (bốc ngẫu nhiên, không lặp liền nhau)
 
 signal point_scored(scorer: Ball, victim: Ball, cause: String)   # có người ghi điểm; cause: "stomp", "pit", "spikes", "bomb" (hoặc chữ khác do sự kiện / vật phẩm đặt)
 signal match_started                    # hết phần giới thiệu, trận bắt đầu (bóng điều khiển được)
@@ -30,6 +33,8 @@ const SHOVE_LIFT := 180.0               # và hất lên cao một chút cho "n�
 const SHOVE_GAP := 1.0                  # cách nhau (mép tới mép) dưới bấy nhiêu pixel thì tính là đang chạm (gần như dính nhau)
 const SPAWN_CHARS := "OP"               # ký tự xuất phát (O = người chơi 1, P = người chơi 2)
 const BALL_LAYER := 2                   # lớp va chạm của bóng (bằng Ball.BALL_LAYER)
+const LEADER_SCALE := 1.25              # người dẫn điểm to hơn bấy nhiêu lần (đầu to dễ bị dẫm hơn)
+const CROWN_PX := 3.0                   # mỗi điểm của vương miện trên đầu người dẫn điểm to 3 x 3
 
 static var _last_arena := -1            # đấu trường của trận trước (để trận sau cố đổi sang đấu trường khác)
 
@@ -52,6 +57,8 @@ var spawn_points: Array[Vector2] = []   # chỗ xuất phát / hồi sinh của 
 var match_running := false              # true = đang đấu (có thể ghi điểm); false = đang giới thiệu hoặc đã hết trận
 var winner: Ball = null                 # người thắng (null khi chưa hết trận)
 var events: BrawlEvents                 # sự kiện ngẫu nhiên (scripts/brawl_events.gd): events.start_event(id), events.active_event...
+var items: BrawlItems                   # vật phẩm troll (scripts/brawl_items.gd): items.held, items.give(), items.use()...
+var leader: Ball = null                 # người đang dẫn điểm (null = hoà hoặc chưa/đã hết trận): đội vương miện, to hơn LEADER_SCALE
 var vs_bot := false                     # chế độ đánh với máy (chỉ lưu cờ; bot sẽ làm ở phần sau)
 var stall_active := false               # đang trong giai đoạn gai chống câu giờ
 var stall_spikes: Array[Spikes] = []    # các gai chống câu giờ đang có trên sàn
@@ -59,7 +66,9 @@ var _stall_time := 0.0                  # đã bao lâu rồi không ai ghi đi�
 var _stall_next := 0.0                  # còn bao lâu nữa gai mọc thêm
 var _stall_left: Array[int] = []        # các cột còn lại để mọc gai phía bên trái (từ ngoài vào trong)
 var _stall_right: Array[int] = []       # các cột còn lại để mọc gai phía bên phải (từ ngoài vào trong)
-var _was_touching := false              # khung trước hai bóng có đang chạm nhau không (để hất đúng lúc VỪA chạm)
+var _last_taunt := ""                   # câu châm chọc vừa hiện (mẫu chưa thay tên), để câu sau không trùng
+var _crowns: Array = [null, null]       # vương miện (CrownMarker) đang gắn trên mỗi bóng, null = không có
+var _was_touching := false            # khung trước hai bóng có đang chạm nhau không (để hất đúng lúc VỪA chạm)
 var _shove_wait := 0                    # > 0: còn bao nhiêu khung nữa thì hất (hất chậm 1 khung để cú hất cộng THÊM vào cú nảy của vật lý, không thay nó)
 
 
@@ -109,7 +118,10 @@ func _ready() -> void:
 	events = BrawlEvents.new()                    # sự kiện ngẫu nhiên (LOW GRAVITY, HOT POTATO...), tự nghe match_started
 	events.name = "Events"                        # tên node cho dễ tìm
 	add_child(events)                             # thêm vào cảnh (sau khi bóng và HUD đã có)
-	hud.setup(WIN_SCORE)                          # cài giao diện
+	items = BrawlItems.new()                      # vật phẩm troll (hộp "?", súng đẩy, chuối, đổi chỗ, bẫy lò xo); tạo SAU events để nghe sự kiện đúng thứ tự
+	items.name = "Items"                          # tên node cho dễ tìm
+	add_child(items)                              # thêm vào cảnh
+	hud.setup(WIN_SCORE)                        # cài giao diện
 	hud.rematch_pressed.connect(func() -> void: Game.start_brawl(Game.brawl_vs_bot))   # bấm Rematch: vào trận mới
 	hud.menu_pressed.connect(Game.go_to_menu)     # bấm Menu: về menu
 	_start_intro()                                # "READY... BOUNCE!" rồi mới cho đấu
@@ -162,6 +174,7 @@ func _physics_process(delta: float) -> void:
 		# dưới đáy FALL_MARGIN pixel = rơi xuống vực; ra hẳn ngoài hai bên / trên cũng tính vậy (phòng hờ lỗi vật lý)
 		if not ball.dead and not arena_rect.grow_individual(200.0, 200.0, 200.0, FALL_MARGIN).has_point(ball.global_position):
 			kill(ball, "pit")                     # rơi xuống vực: đối thủ ghi điểm
+	_update_leader()                              # ai dẫn điểm thì đội vương miện (phòng khi điểm bị đổi không qua kill())
 	_shove_balls()                                # hất hai bóng ra xa nhau lúc vừa chạm
 	_update_stall(delta)                          # đếm giờ chống câu giờ
 
@@ -213,6 +226,7 @@ func kill(victim: Ball, cause: String) -> void:
 	if over:                                      # đủ điểm
 		match_running = false                     # hết trận: không ai ghi thêm điểm nữa
 		winner = scorer                           # nhớ người thắng
+	_update_leader()                              # điểm đổi: đổi người đội vương miện (hết trận thì bỏ hết)
 	point_scored.emit(scorer, victim, cause)      # báo cho các tính năng khác
 	hud.flash(_point_text(scorer, victim, cause), 1.0, BrawlHud.PLAYER_COLORS[si])   # thông báo ai ghi điểm
 	if over:                                      # kết thúc trận
@@ -220,18 +234,14 @@ func kill(victim: Ball, cause: String) -> void:
 	_death_sequence(victim, cause, not over)      # nạn nhân vỡ; hồi sinh nếu trận còn tiếp
 
 
-## Chữ thông báo cho một điểm, vd "P1 STOMPS P2!".
+## Chữ thông báo cho một điểm, vd "P1 STOMPS P2!": bốc ngẫu nhiên một câu trong BrawlData.TAUNTS theo nguyên nhân
+## ("stomp", "pit", "spikes", "bomb", còn lại là "default"), không bao giờ trùng câu ngay trước.
 func _point_text(scorer: Ball, victim: Ball, cause: String) -> String:
-	match cause:                                  # theo nguyên nhân
-		"stomp":
-			return "P%d STOMPS P%d!" % [scorer.player_id, victim.player_id]   # dẫm đầu
-		"pit":
-			return "P%d FELL IN!" % victim.player_id   # rơi xuống vực
-		"spikes":
-			return "P%d GOT SPIKED!" % victim.player_id   # dính gai
-		"bomb":
-			return "P%d WENT BOOM!" % victim.player_id   # bom HOT POTATO nổ trên đầu
-	return "P%d SCORES!" % scorer.player_id       # nguyên nhân khác (sự kiện, vật phẩm)
+	var pool: Array = BrawlData.TAUNTS.get(cause, BrawlData.TAUNTS["default"])   # các câu của nguyên nhân này
+	var options: Array = pool.filter(func(line: String) -> bool: return line != _last_taunt)   # bỏ câu vừa dùng
+	var line: String = options[randi() % options.size()]   # bốc một câu
+	_last_taunt = line                            # nhớ để lần sau không trùng
+	return line.format({"s": "P%d" % scorer.player_id, "v": "P%d" % victim.player_id})   # thay tên người chơi vào câu
 
 
 ## Hết trận: khoá người thắng đứng yên, báo tín hiệu, một lúc sau hiện bảng thắng.
@@ -266,7 +276,8 @@ func _death_sequence(victim: Ball, cause: String, respawn: bool) -> void:
 
 ## Hồi sinh `ball` ở chỗ xuất phát, miễn sát thương một lúc. (Trận đã hết thì chỉ hiện ra, không điều khiển.)
 func _respawn(ball: Ball) -> void:
-	ball.teleport(spawn_of(ball))                 # đặt lại ở chỗ xuất phát
+	var base_radius := ball.radius / ball.size_factor   # bán kính gốc (người dẫn điểm to hơn thì tâm phải cao hơn, không lún xuống đất)
+	ball.teleport(spawn_of(ball) + Vector2(0.0, base_radius - ball.radius))   # đặt lại ở chỗ xuất phát, chân vẫn đứng trên mặt đất
 	ball.collision_layer = BALL_LAYER             # va chạm trở lại
 	ball.show()                                   # hiện bóng
 	ball.invuln = RESPAWN_INVULN                  # miễn sát thương, không bị dẫm lấy điểm
@@ -292,6 +303,69 @@ func _pop_effect(pos: Vector2, color: Color) -> void:
 	level.add_child(p)                            # thêm vào màn
 	p.emitting = true                             # bắt đầu phát hạt
 	get_tree().create_timer(1.2).timeout.connect(p.queue_free)   # sau 1,2 giây thì xóa bộ phát hạt
+
+
+# ---- Người dẫn điểm: vương miện và to hơn ----
+
+## Người đang dẫn điểm: nhiều điểm hơn hẳn người kia; hoà thì null; ngoài lúc đang đấu (giới thiệu, đã hết trận) cũng null.
+func _leader_by_score() -> Ball:
+	if not match_running or scores[0] == scores[1]:   # chưa / hết trận, hoặc hoà
+		return null                               # không ai dẫn điểm
+	return balls[0] if scores[0] > scores[1] else balls[1]   # ai nhiều điểm hơn
+
+## Cập nhật người dẫn điểm: ai mới dẫn thì đội vương miện và phóng to 25%, ai vừa mất ngôi thì bỏ vương miện và về cỡ thường.
+## Gọi mỗi khi điểm đổi (kill) và mỗi khung vật lý khi đang đấu; không có gì đổi thì không làm gì.
+func _update_leader() -> void:
+	var want := _leader_by_score()                # người đáng được đội vương miện lúc này
+	if want == leader:                            # không đổi
+		return
+	leader = want                                 # nhớ người dẫn điểm mới
+	for i in 2:                                   # xét từng bóng
+		var ball := balls[i]
+		var crowned := ball == leader             # bóng này có đội vương miện không
+		if crowned and not is_equal_approx(ball.size_factor, LEADER_SCALE):   # mới lên ngôi
+			ball.set_size(LEADER_SCALE)           # to hơn 25%
+		elif not crowned and is_equal_approx(ball.size_factor, LEADER_SCALE):   # vừa mất ngôi (hoặc hết trận)
+			ball.set_size(1.0)                    # về cỡ thường
+		if crowned and _crowns[i] == null:        # cần vương miện mà chưa có
+			var crown := CrownMarker.new()        # tạo vương miện
+			crown.brawl = self                    # để nó biết bóng đang cầm bom (nhường chỗ)
+			crown.ball = ball                     # bóng nó đội
+			ball.add_child(crown)                 # gắn vào bóng để đi theo
+			_crowns[i] = crown                    # nhớ để gỡ
+		elif not crowned and _crowns[i] != null:  # đang có vương miện mà hết quyền
+			if is_instance_valid(_crowns[i]):     # còn tồn tại
+				_crowns[i].queue_free()           # gỡ khỏi đầu
+				ball.remove_child(_crowns[i])     # gỡ ngay, không chờ cuối khung (bài test đếm số node con)
+			_crowns[i] = null                     # không còn
+
+
+## Vương miện nổi trên đầu người dẫn điểm (PixelArt.CROWN), nhấp nhô nhẹ; ẩn khi bóng đang dẹt / chờ hồi sinh,
+## và bay cao hơn khi bóng đang cầm bom HOT POTATO (bom nằm ngay trên đầu).
+class CrownMarker extends Node2D:
+	const HEAD_TOP := 46.0                    # đỉnh đầu nằm cao hơn tâm bóng bấy nhiêu pixel (ở cỡ gốc, nhân với size_factor)
+	const BOMB_LIFT := 84.0                   # cầm bom: vương miện nâng lên bấy nhiêu để nằm trên quả bom
+	var ball: Ball = null                     # bóng đang đội
+	var brawl: Brawl = null                   # cảnh đấu (để biết ai cầm bom)
+	var _time := 0.0                          # đồng hồ nhấp nhô
+
+	## Vẽ trên hình bóng.
+	func _init() -> void:
+		z_index = 10                          # nằm trên bóng
+
+	## Mỗi khung: nhấp nhô, đặt vị trí theo cỡ bóng, ẩn khi bóng đang chết.
+	func _process(delta: float) -> void:
+		_time += delta                        # cộng thời gian
+		visible = not ball.dead               # bóng dẹt / chờ hồi sinh thì không đội
+		var f := ball.size_factor             # hệ số cỡ bóng (to lên thì đầu cao lên)
+		var lift := 0.0                       # nâng thêm khi cầm bom
+		if brawl != null and brawl.events != null and brawl.events.bomb_carrier == ball:   # đang cầm bom
+			lift = BOMB_LIFT                  # nhường chỗ cho quả bom
+		position = Vector2(0.0, -(HEAD_TOP * f + 11.0 + lift + sin(_time * 4.0) * 2.0))   # ngay trên đỉnh đầu
+
+	## Vương miện vàng (vẽ một lần, di chuyển bằng position).
+	func _draw() -> void:
+		PixelArt.draw_centered(self, PixelArt.CROWN, Vector2.ZERO, Brawl.CROWN_PX)   # vẽ vương miện pixel
 
 
 # ---- Gai chống câu giờ ----

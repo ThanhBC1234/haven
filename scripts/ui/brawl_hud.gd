@@ -16,12 +16,16 @@ const EVENT_SIZE_ROLL := Vector2(520, 112)    # khung banner lúc đang quay rou
 const EVENT_SIZE_ACTIVE := Vector2(560, 68)   # khung banner gọn lúc sự kiện đang chạy: nằm ở dải trên giữa hai ô điểm (y 12..80), thay vương miện và "FIRST TO"
 const EVENT_ACTIVE_Y := 12.0           # mép trên của banner gọn (bằng mép trên các ô điểm)
 const ROULETTE_TICKS := 18              # roulette nhảy qua bấy nhiêu tên trước khi dừng
+const SLOT_SIZE := Vector2(88, 76)      # ô vật phẩm đang cầm: nằm ngay cạnh ô điểm (phía trong, hướng vào giữa màn hình)
+const SLOT_GAP := 6.0                   # khoảng cách giữa ô điểm và ô vật phẩm
 
 var win_score := 5                      # điểm cần để thắng (hiện ở giữa trên)
 var win_panel: PanelContainer           # bảng thắng cuộc (null = chưa hiện)
 var rematch_button: Button              # nút chơi lại trận (null khi chưa có bảng thắng)
 var menu_button: Button                 # nút về menu (null khi chưa có bảng thắng)
 var message_label: Label                # chữ thông báo giữa trên (đọc để kiểm tra)
+var item_ids := ["", ""]                # vật phẩm đang cầm của [người chơi 1, người chơi 2] ("" = tay trống), đọc để kiểm tra
+var _item_ammo := [0, 0]                # số phát súng còn lại (chỉ hiện khi đang cầm súng)
 var _scores := [0, 0]                   # điểm hiện tại [người chơi 1, người chơi 2]
 var _frame: StyleBoxTexture             # khung SHADOW làm nền cho các ô điểm
 var _flash_tween: Tween                 # hiệu ứng mờ dần của thông báo đang chạy (để hủy khi có thông báo mới)
@@ -55,8 +59,8 @@ func setup(target_score: int) -> void:
 	add_child(message_label)                    # gắn vào HUD
 
 	# dòng nhắc phím: người chơi 1 ở góc dưới trái, người chơi 2 ở góc dưới phải, Esc ở giữa
-	_add_hint("P1:  A / D + W", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
-	_add_hint("P2:  LEFT / RIGHT + UP", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
+	_add_hint("P1:  A / D + W     S: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
+	_add_hint("P2:  LEFT / RIGHT + UP     DOWN: use item", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
 	_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
 	queue_redraw()                              # yêu cầu vẽ lại (Godot sẽ gọi _draw)
 
@@ -81,6 +85,14 @@ func set_score(player_id: int, value: int) -> void:
 func set_scores(p1: int, p2: int) -> void:
 	_scores = [p1, p2]                          # nhớ điểm mới của cả hai
 	queue_redraw()                              # vẽ lại ô điểm
+
+
+## Đặt vật phẩm đang cầm của người chơi `player_id` (1 hoặc 2) hiện ở ô cạnh ô điểm; `id` = "" là tay trống.
+## `ammo`: số phát còn lại (chỉ hiện cạnh tên súng). Mã vật phẩm và hình lấy ở BrawlItems.ITEM_ICONS / ITEM_NAMES.
+func set_item(player_id: int, id: String, ammo := 0) -> void:
+	item_ids[player_id - 1] = id                # nhớ vật phẩm mới
+	_item_ammo[player_id - 1] = ammo            # nhớ số đạn
+	queue_redraw()                              # vẽ lại ô vật phẩm
 
 
 ## Hiện dòng chữ giữa trên màn hình `seconds` giây rồi mờ dần. `color` là màu chữ (mặc định xanh rêu).
@@ -213,12 +225,33 @@ func _draw() -> void:
 		draw_string(font, box.position + Vector2(112, 56), str(_scores[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_LARGE, col.lightened(0.2))
 		# "/ n" nhỏ cạnh điểm: cho biết cần bao nhiêu điểm để thắng
 		draw_string(font, box.position + Vector2(160, 56), "/ %d" % win_score, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_SMALL, UiTheme.DIM)
-	var mid := size.x / 2.0                     # giữa màn hình
+		_draw_item_slot(font, i, box)           # ô vật phẩm đang cầm, ngay cạnh ô điểm
+	var mid := size.x / 2.0                   # giữa màn hình
 	if event_state != "active":                 # sự kiện đang chạy thì banner gọn chiếm chỗ vương miện và chữ FIRST TO (hết sự kiện lại hiện)
 		PixelArt.draw_centered(self, PixelArt.CROWN, Vector2(mid, 34), CROWN_PX)   # vương miện pixel
 		draw_string(font, Vector2(mid - 100, 70), "FIRST TO %d WINS" % win_score, HORIZONTAL_ALIGNMENT_CENTER, 200, UiTheme.FONT_SMALL, UiTheme.TEXT)
 	if event_state != "":                       # có banner sự kiện
 		_draw_event_banner(font, mid)           # vẽ banner dưới dòng thông báo
+
+
+## Ô vật phẩm của người chơi thứ `i` (0 / 1) nằm cạnh ô điểm `score_box`: khung, hình vật phẩm, tên (súng kèm số phát còn lại).
+## Tay trống thì chỉ hiện khung mờ với chữ "ITEM".
+func _draw_item_slot(font: Font, i: int, score_box: Rect2) -> void:
+	var x := score_box.end.x + SLOT_GAP if i == 0 else score_box.position.x - SLOT_GAP - SLOT_SIZE.x   # P1 bên phải ô điểm, P2 bên trái (hướng vào giữa)
+	var slot := Rect2(Vector2(x, score_box.position.y), SLOT_SIZE)   # ô vật phẩm
+	draw_style_box(_frame, slot)                # khung nền giống ô điểm
+	var id: String = item_ids[i]                # vật phẩm đang cầm
+	var col: Color = PLAYER_COLORS[i]           # màu người chơi
+	if id == "":                                # tay trống
+		draw_string(font, Vector2(slot.position.x, slot.position.y + 46), "ITEM", HORIZONTAL_ALIGNMENT_CENTER, slot.size.x, UiTheme.FONT_SMALL, UiTheme.DIM)   # nhắc là còn chỗ
+		return
+	var pattern: Array = BrawlItems.ITEM_ICONS[id]   # hình pixel của vật phẩm
+	var px := floorf(minf(60.0 / String(pattern[0]).length(), 34.0 / pattern.size()))   # cỡ điểm ảnh lớn nhất mà hình vẫn nằm gọn trong 60 x 34
+	PixelArt.draw_centered(self, pattern, slot.position + Vector2(slot.size.x / 2.0, 30.0), px)   # hình vật phẩm ở nửa trên ô
+	var label: String = BrawlItems.ITEM_NAMES[id]   # tên vật phẩm
+	if id == "gun":                             # súng: kèm số phát còn lại
+		label += " x%d" % _item_ammo[i]
+	draw_string(font, Vector2(slot.position.x, slot.position.y + 62), label, HORIZONTAL_ALIGNMENT_CENTER, slot.size.x, UiTheme.FONT_SMALL, col.lightened(0.35))   # tên ở nửa dưới ô
 
 
 ## Vẽ banner sự kiện giữa trên: lúc quay thì tên chạy qua với hai mũi tên hai bên, lúc chạy thì tên và thanh đếm ngược.
