@@ -34,7 +34,7 @@ var best_stars := {}       # số sao nhiều nhất từng màn thường: {ch�
 var best_score := 0        # điểm cao nhất chế độ vô tận
 var total_stars := 0       # tổng số sao đã gom qua mọi lượt chơi
 var save_enabled := true   # bài test tắt đi để không ghi đè kỷ lục thật
-var brawl_vs_bot := false  # chế độ đấu 2 người: true = người chơi 2 là máy (chỉ lưu cờ, bot làm ở phần sau)
+var brawl_vs_bot := false  # chế độ đấu 2 người: true = người chơi 2 là máy (Brawl tạo BrawlBot khi cờ này bật)
 
 
 ## Godot gọi một lần khi mở game: cài phím, đọc file lưu.
@@ -61,7 +61,7 @@ func start_endless() -> void:
 	get_tree().change_scene_to_file(ENDLESS_SCENE)   # chuyển sang cảnh vô tận
 
 
-## Vào chế độ đấu 2 người (Bounce Brawl). `vs_bot` = true: người chơi 2 do máy điều khiển (bot làm ở phần sau).
+## Vào chế độ đấu 2 người (Bounce Brawl). `vs_bot` = true: người chơi 2 do máy điều khiển (BrawlBot).
 func start_brawl(vs_bot := false) -> void:
 	brawl_vs_bot = vs_bot                    # nhớ để cảnh đấu và nút Rematch dùng lại
 	get_tree().change_scene_to_file(BRAWL_SCENE)   # chuyển sang cảnh đấu 2 người

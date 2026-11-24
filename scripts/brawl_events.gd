@@ -319,7 +319,7 @@ func _give_bomb() -> void:
 	_set_carrier(options[randi() % options.size()])   # bốc ngẫu nhiên
 	_bomb.fuse_left = time_left                   # số đếm bắt đầu từ ngòi đầy
 	_bomb.fuse_total = time_left                  # tổng thời gian ngòi (để tính tốc độ nhấp nháy)
-	brawl.hud.flash("P%d HAS THE BOMB!" % bomb_carrier.player_id, 1.0, BrawlHud.PLAYER_COLORS[brawl.balls.find(bomb_carrier)])   # báo ai cầm
+	brawl.hud.flash("%s HAS THE BOMB!" % brawl.player_name(bomb_carrier), 1.0, BrawlHud.PLAYER_COLORS[brawl.balls.find(bomb_carrier)])   # báo ai cầm
 
 
 ## Giao bom cho `ball`: bom nổi trên đầu người đó (người cũ mất bom).
@@ -352,7 +352,7 @@ func _tick_potato(delta: float) -> void:
 		_set_carrier(other)                       # chuyền bom
 		_bomb.fuse_left = maxf(0.0, time_left)    # giữ số đếm
 		_burst(other.global_position, EVENT_COLORS["hot_potato"], 10, 80.0, 200.0, 0.4)   # tia lửa báo đã chuyền
-		brawl.hud.flash("P%d HAS THE BOMB!" % other.player_id, 0.8, BrawlHud.PLAYER_COLORS[brawl.balls.find(other)])   # báo ai cầm
+		brawl.hud.flash("%s HAS THE BOMB!" % brawl.player_name(other), 0.8, BrawlHud.PLAYER_COLORS[brawl.balls.find(other)])   # báo ai cầm
 
 
 ## Hết ngòi: bom nổ, người cầm bị giết (người kia ghi điểm), rồi sự kiện kết thúc.

@@ -11,6 +11,15 @@ func _ready() -> void:
 		if a.begins_with("--shots="):
 			dir = a.trim_prefix("--shots=")
 	Game.save_enabled = false                       # không ghi đè file lưu thật
+	if OS.get_cmdline_user_args().has("--only-bot"):   # chỉ chụp phần đấu với máy cho nhanh (godot ... -- --shots=<thư mục> --only-bot)
+		await _bot_shots()
+		get_tree().quit()
+		return
+	if OS.get_cmdline_user_args().has("--only-sudden"):   # chỉ chụp SUDDEN DEATH (godot ... -- --shots=<thư mục> --only-sudden)
+		for i in BrawlData.ARENAS.size():
+			await _sudden_shots(i)
+		get_tree().quit()
+		return
 	for i in BrawlData.ARENAS.size():
 		var brawl := await _start(i)
 		brawl.events.enabled = false                 # các ảnh dưới đây không có sự kiện ngẫu nhiên chen vào
@@ -44,7 +53,69 @@ func _ready() -> void:
 		await _frames(3)
 		await _event_shots(i)                        # banner roulette, sự kiện đang chạy (sàn băng), bom HOT POTATO
 		await _item_shots(i)                         # vật phẩm troll, vương miện, câu châm chọc
+	await _bot_shots()                               # menu có nút BRAWL VS BOT, trận đấu với máy (ghi BOT), bảng "BOT WINS!"
 	get_tree().quit()
+
+
+## Ảnh SUDDEN DEATH: lúc vừa bắt đầu (banner, hàng gai ở đáy) và giữa chừng khi hàng gai đã dâng qua sàn gai. Hai người đứng bệ cao, miễn sát thương cho tới khi chụp xong.
+func _sudden_shots(index: int) -> void:
+	var brawl := await _start(index)
+	brawl.events.enabled = false
+	brawl.items.enabled = false
+	await _wait_match(brawl)
+	await _frames(40)
+	brawl.stall_timeout = 0.2                        # rút ngắn để chụp: gai sàn mọc kín nhanh, hàng gai dâng 120 pixel/giây
+	brawl.stall_step = 0.05
+	brawl.sudden_death_delay = 0.5
+	brawl.sudden_death_speed = 120.0
+	brawl._reset_stall()
+	var tops := {0: Vector2(640, 340), 1: Vector2(640, 250)}   # bệ cao nhất của từng đấu trường (ở giữa)
+	brawl.balls[0].teleport(tops[index] + Vector2(-60, 0))
+	brawl.balls[1].teleport(tops[index] + Vector2(60, 0))
+	for ball in brawl.balls:
+		ball.invuln = 9999.0                         # không chết vì gai sàn hay hàng gai trong lúc chụp
+	while not brawl.sudden_death_active:
+		await _frames(1)
+	await _frames(20)
+	await _shot("arena%d_sudden_start" % index)      # banner SUDDEN DEATH!, hàng gai vừa nhô lên ở đáy
+	while brawl.hazard_y() > 470.0:
+		await _frames(1)
+	await _shot("arena%d_sudden_midrise" % index)    # hàng gai đang dâng giữa chừng, đè lên đất và bệ
+	brawl.queue_free()
+	await _frames(3)
+
+
+## Ảnh chế độ đấu với máy: menu mới (hai nút Brawl), trận đang chơi (HUD ghi BOT, không có dòng phím của P2), câu châm chọc nhắc BOT, bảng thắng.
+func _bot_shots() -> void:
+	var menu: Control = load("res://scenes/menu.tscn").instantiate()
+	add_child(menu)
+	await _frames(8)
+	await _shot("menu_brawl_buttons")
+	menu.queue_free()
+	await _frames(3)
+	Game.brawl_vs_bot = true
+	var brawl := await _start(0)
+	brawl.events.enabled = false
+	brawl.items.enabled = false
+	await _wait_match(brawl)
+	await _frames(20)
+	await _shot("bot_ready_bounce")                  # vừa vào trận
+	await _frames(60 * 9)                            # để bot chơi một lúc
+	brawl.items.give(brawl.balls[1], "gun")          # bot cầm súng: ô vật phẩm bên phải hiện súng
+	await _frames(20)
+	await _shot("bot_match_in_progress")
+	brawl.kill(brawl.balls[1], "pit")                # bot rơi xuống vực: câu châm chọc ghi BOT
+	await _frames(12)
+	await _shot("bot_taunt")
+	brawl.scores[1] = Brawl.WIN_SCORE - 1
+	brawl.hud.set_scores(brawl.scores[0], brawl.scores[1])
+	await _frames(100)
+	brawl.kill(brawl.balls[0], "stomp")              # bot ghi điểm thứ 5
+	await _frames(110)
+	await _shot("bot_wins")
+	brawl.queue_free()
+	await _frames(3)
+	Game.brawl_vs_bot = false
 
 
 ## Ảnh sự kiện ngẫu nhiên: roulette đang quay, ICE FLOOR đang chạy (thanh đếm ngược + màu băng), bom HOT POTATO (lúc đầu và lúc sắp nổ).

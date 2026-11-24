@@ -20,6 +20,7 @@ const SLOT_SIZE := Vector2(88, 76)      # ô vật phẩm đang cầm: nằm nga
 const SLOT_GAP := 6.0                   # khoảng cách giữa ô điểm và ô vật phẩm
 
 var win_score := 5                      # điểm cần để thắng (hiện ở giữa trên)
+var vs_bot := false                     # chơi với máy: người chơi 2 ghi là "BOT", không hiện dòng nhắc phím của người chơi 2
 var win_panel: PanelContainer           # bảng thắng cuộc (null = chưa hiện)
 var rematch_button: Button              # nút chơi lại trận (null khi chưa có bảng thắng)
 var menu_button: Button                 # nút về menu (null khi chưa có bảng thắng)
@@ -39,10 +40,11 @@ var _roulette_ticks: Array = []         # lịch quay: mỗi phần tử [thời
 var _roulette_total := 0.0              # thời điểm roulette dừng hẳn ở sự kiện đã chọn
 
 
-## brawl.gd gọi khi vào trận: cài giao diện, nhớ số điểm thắng.
-func setup(target_score: int) -> void:
+## brawl.gd gọi khi vào trận: cài giao diện, nhớ số điểm thắng. `with_bot` = người chơi 2 là máy.
+func setup(target_score: int, with_bot := false) -> void:
 	theme = UiTheme.make()                      # áp bộ giao diện chung (font, màu, khung)
 	win_score = target_score                    # nhớ số điểm cần để thắng
+	vs_bot = with_bot                           # nhớ có chơi với máy không
 	mouse_filter = Control.MOUSE_FILTER_IGNORE  # không chặn chuột (trừ bảng thắng)
 	_frame = UiTheme.frame(UiTheme.FRAME_NORMAL, 0, 0)   # khung nền cho ô điểm
 	set_process(false)                          # _process chỉ chạy khi banner sự kiện đang hiện
@@ -60,7 +62,8 @@ func setup(target_score: int) -> void:
 
 	# dòng nhắc phím: người chơi 1 ở góc dưới trái, người chơi 2 ở góc dưới phải, Esc ở giữa
 	_add_hint("P1:  A / D + W     S: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
-	_add_hint("P2:  LEFT / RIGHT + UP     DOWN: use item", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
+	if not vs_bot:                              # chơi với máy thì người chơi 2 không có phím nào để nhắc
+		_add_hint("P2:  LEFT / RIGHT + UP     DOWN: use item", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
 	_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
 	queue_redraw()                              # yêu cầu vẽ lại (Godot sẽ gọi _draw)
 
@@ -184,7 +187,7 @@ func show_win(winner_id: int, final_scores: Array) -> void:
 	box.add_theme_constant_override("separation", 12)   # khoảng cách giữa các dòng
 	win_panel.add_child(box)                    # đặt cột vào bảng
 	var title := Label.new()                    # dòng tiêu đề
-	title.text = "PLAYER %d WINS!" % winner_id  # vd PLAYER 1 WINS!
+	title.text = "BOT WINS!" if vs_bot and winner_id == 2 else "PLAYER %d WINS!" % winner_id   # vd PLAYER 1 WINS!
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER   # canh giữa
 	title.add_theme_font_size_override("font_size", UiTheme.FONT_LARGE)   # chữ to
 	title.add_theme_color_override("font_color", PLAYER_COLORS[winner_id - 1])   # màu của người thắng
@@ -220,7 +223,8 @@ func _draw() -> void:
 		draw_style_box(_frame, box)             # vẽ khung nền
 		var col: Color = PLAYER_COLORS[i]       # màu của người chơi này
 		# nhãn P1 / P2 bên trái ô
-		draw_string(font, box.position + Vector2(34, 50), "P%d" % (i + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_MEDIUM, col)
+		var label := "BOT" if vs_bot and i == 1 else "P%d" % (i + 1)   # chơi với máy: ô bên phải ghi BOT
+		draw_string(font, box.position + Vector2(20 if label == "BOT" else 34, 50), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_MEDIUM, col)
 		# điểm số to bên phải ô
 		draw_string(font, box.position + Vector2(112, 56), str(_scores[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_LARGE, col.lightened(0.2))
 		# "/ n" nhỏ cạnh điểm: cho biết cần bao nhiêu điểm để thắng

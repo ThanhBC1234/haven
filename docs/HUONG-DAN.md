@@ -29,6 +29,92 @@ Godot 4.5 → **Import** → chọn `project.godot` → **F5**.
 - **Màn thường:** First Bounce, Seesaw Valley, Boss Arena (có đích, 3 sao mỗi màn). Màn đẩy thùng đã bỏ.
 - Cứ 8 đoạn vô tận có một **đấu trường boss** (`BOSS_ARENA` trong `segment_data.gd`, đổi tần suất ở `BOSS_EVERY` trong `endless.gd`). Hạ boss +500 x hệ số nhân.
 
+## Chế độ Bounce Brawl (2 người)
+
+Hai quả bóng trên một màn hình, một bàn phím. Ở menu bấm **BRAWL 2P** (hai người) hoặc **BRAWL VS BOT** (đấu với máy).
+Mỗi trận bốc ngẫu nhiên một đấu trường trong `scripts/brawl_data.gd`.
+
+| Việc | Người chơi 1 (bên trái, màu đỏ) | Người chơi 2 (bên phải, màu xanh) |
+|---|---|---|
+| Giữ để nghiêng trái, tích lực | A | ← |
+| Giữ để nghiêng phải, tích lực | D | → |
+| Nhảy (theo hướng và lực đang tích) | W | ↑ |
+| Dùng vật phẩm | S | ↓ |
+
+- **Cách ghi điểm:** dẫm đầu đối thủ (stomp), đối thủ rơi xuống vực, hoặc đối thủ chạm gai. Mỗi lần được 1 điểm.
+- **Thắng:** ai đạt **5 điểm** (`WIN_SCORE` trong `scripts/brawl.gd`) trước thì thắng.
+- **Hồi sinh:** bóng chết thì vỡ, sau 1,2 giây hồi sinh ở chỗ xuất phát của mình. Vừa hồi sinh được miễn sát thương 1,5 giây, trong lúc đó không bị dẫm lấy điểm.
+- **Người dẫn điểm** đội vương miện và to hơn 25%, nên dễ bị dẫm hơn. Hoà điểm thì không ai có vương miện.
+
+### Chống câu giờ
+
+- Sau **30 giây** mà không ai ghi điểm, gai bắt đầu mọc từ hai bên mặt đất, cứ **2 giây** thêm một ô gai mỗi bên.
+- Khi sàn đã kín gai và chờ thêm **4 giây** thì **SUDDEN DEATH**: một hàng gai kín bề ngang dâng từ đáy lên, tốc độ 35 pixel mỗi giây. Ai bị chạm là chết.
+- Có người ghi điểm thì gai và hàng gai biến mất, đếm giờ lại từ đầu.
+
+### Sự kiện ngẫu nhiên
+
+Trận bắt đầu được 10 giây thì sự kiện đầu tiên bốc thăm, sau đó **cứ 15 giây một lần**. Trước mỗi sự kiện có màn quay roulette 2 giây giữa màn hình. Không lặp lại sự kiện vừa rồi.
+
+| Sự kiện | Tác dụng | Thời gian |
+|---|---|---|
+| LOW GRAVITY | Trọng lực còn 40%: nhảy cao hơn, rơi chậm | 10 giây |
+| SUPER BOUNCE | Bóng nảy gần như không mất lực | 10 giây |
+| ICE FLOOR | Mặt đất như băng, bóng trượt rất lâu | 10 giây |
+| REVERSED KEYS | Phím trái / phải của cả hai người bị đảo | 8 giây |
+| SWAP! | Hai người đổi chỗ ngay lập tức | Tức thì |
+| HOT POTATO | Quả bom trên đầu người cầm. Chạm đối thủ thì chuyền bom (chờ 1 giây mới chuyền tiếp được). Hết ngòi thì nổ, người cầm chết | Ngòi 8 giây |
+
+Hết sự kiện thì mọi thứ được trả lại như cũ.
+
+### Vật phẩm (hộp "?")
+
+Hộp đầu tiên hiện 3 giây sau khi trận bắt đầu, sau đó **cứ 6 giây một hộp**, tối đa 2 hộp trên sân. Hộp không hiện gần người chơi hoặc gần hộp khác, và không nằm trên gai hay vực.
+Chạm hộp lúc tay trống để nhặt. Mỗi người chỉ cầm một món, chết là mất. Dùng bằng phím S / ↓.
+
+| Vật phẩm | Tác dụng |
+|---|---|
+| GUN | 3 phát. Mỗi phát hất đối thủ rất mạnh, không gây sát thương, nhưng đủ để đẩy họ xuống vực |
+| BANANA | Đối thủ bị đảo trái / phải trong 3 giây |
+| SWAP | Hai người đổi chỗ và vận tốc ngay |
+| SPRING | Thả bẫy lò xo dưới chân. Sau 0,5 giây bẫy lên cò, ai chạm trước (kể cả chủ) bị bắn lên cao. Bẫy tự mất sau 12 giây |
+
+### Câu châm chọc
+
+Mỗi lần có điểm, giữa màn hình hiện một câu bốc ngẫu nhiên theo cách ghi điểm (dẫm, rơi, gai, bom...).
+Muốn thêm câu: mở `scripts/brawl_data.gd`, chép một dòng vào đúng nhóm trong `TAUNTS`. `{s}` là người ghi điểm, `{v}` là người bị ghi điểm. Chỉ dùng chữ ASCII và câu ngắn.
+
+### Đấu với máy
+
+Bấm **BRAWL VS BOT** ở menu. Máy điều khiển người chơi 2 đúng bằng các phím của người chơi 2 (chỉ bấm phím, không dịch chuyển bóng).
+Độ giỏi chỉnh ở `skill` trong `scripts/brawl_bot.gd` (từ 0 đến 1, mặc định 0,6): 0 thì chậm và vụng, 1 thì nhanh và chuẩn.
+
+### Chỉnh ở đâu
+
+| Chỉnh gì | Ở đâu |
+|---|---|
+| Điểm thắng (`WIN_SCORE`), thời gian hồi sinh (`respawn_delay`), miễn sát thương (`RESPAWN_INVULN`), vương miện (`LEADER_SCALE`) | `scripts/brawl.gd` |
+| Câu chờ chống câu giờ (`stall_timeout`, `stall_step`) và SUDDEN DEATH (`sudden_death_delay`, `sudden_death_speed`) | `scripts/brawl.gd` |
+| Khoảng cách và thời điểm sự kiện (`interval`, `first_delay`, `roulette_seconds`), thời gian từng sự kiện (`low_gravity_seconds`, `reversed_keys_seconds`, `hot_potato_seconds`...) | `scripts/brawl_events.gd` |
+| Hộp vật phẩm (`spawn_interval`, `first_delay`, `max_boxes`), súng (`gun_knockback`), chuối (`banana_seconds`), bẫy lò xo (`spring_arm_seconds`, `spring_life_seconds`, `spring_launch`) | `scripts/brawl_items.gd` |
+| Câu châm chọc (`TAUNTS`), đấu trường (`ARENAS`) | `scripts/brawl_data.gd` |
+| Độ giỏi của máy (`skill`) | `scripts/brawl_bot.gd` |
+
+### Thêm đấu trường mới
+
+Mở `scripts/brawl_data.gd`, chép một khối `{"name": ..., "map": r"""..."""}` vào `ARENAS`, rồi sửa bản đồ. Quy tắc:
+
+- Đúng **40 cột x 22 hàng** (một màn hình, mỗi ô 32 pixel). Cột đầu và cuối là tường `#`, hai hàng cuối là đất.
+- `O` là chỗ xuất phát của người chơi 1, `P` là của người chơi 2. Vực là chỗ để trống ở hai hàng cuối.
+- Nên **đối xứng qua giữa** để hai bên công bằng: cột `c` giống cột `39 - c`, `O` đối xứng với `P`.
+- Các ký tự khác giống `scripts/level_data.gd` (`^` gai, `v` gai treo, `T` lò xo...).
+
+### Kiểm tra
+
+- `tests/brawl_soak.tscn`: hai bot đấu nhau trọn trận, in kết quả và dòng `ANOMALY` nếu có lỗi lạ. Chạy:
+  `godot --headless --fixed-fps 60 --path . res://tests/brawl_soak.tscn`
+- `tests/brawl_preview.tscn` (chạy có cửa sổ): chụp ảnh các đấu trường, gai, sự kiện, vật phẩm và vương miện.
+
 ## Vật phẩm, súng, boss
 
 | Thứ | Ký tự | Tác dụng |
@@ -180,6 +266,12 @@ Mỗi đồ vật đang tự vẽ hình tạm bằng code. Để thay bằng PNG
 | `scripts/endless.gd` | Chế độ vô tận: ghép đoạn ngẫu nhiên, đấu trường boss, điểm, hệ số nhân, thua |
 | `scripts/pixel_art.gd` | Hình pixel vẽ bằng code (tim, khiên, súng, đạn, boss, dấu !) |
 | `scripts/objects/boss.gd`, `player_bullet.gd` | Boss lăn trên mặt đất, đạn người chơi |
+| `scripts/brawl.gd` | Chế độ Bounce Brawl (2 người): đấu trường, điểm, hồi sinh, gai chống câu giờ, SUDDEN DEATH, vương miện |
+| `scripts/brawl_events.gd` | Sự kiện ngẫu nhiên của Brawl (LOW GRAVITY, HOT POTATO...) và màn quay roulette |
+| `scripts/brawl_items.gd` | Vật phẩm troll của Brawl: hộp, súng, chuối, đổi chỗ, bẫy lò xo |
+| `scripts/brawl_bot.gd` | Máy chơi Brawl (BRAWL VS BOT) |
+| `scripts/brawl_data.gd` | Đấu trường và câu châm chọc của Brawl |
+| `scripts/ui/brawl_hud.gd` | Giao diện Brawl: điểm, dòng thông báo, bảng thắng |
 | `scripts/play.gd` | Camera, mạng, sao, hồi sinh, qua màn |
 | `scripts/objects/` | Quái, thùng, gai, nút, cửa, bệ, bập bênh, sao/cờ/đích/lò xo |
 | `scripts/ui/` | Menu, HUD, giao diện |
@@ -191,4 +283,4 @@ Mỗi đồ vật đang tự vẽ hình tạm bằng code. Để thay bằng PNG
 godot --headless --fixed-fps 60 --path . res://tests/smoke.tscn
 ```
 
-Chạy 80 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận, hồi sinh). `tests/soak.tscn` cho một bot chơi ngẫu nhiên chế độ vô tận và cả 3 màn để dò lỗi lúc chạy (dòng `ANOMALY` là chỗ cần xem). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.
+Chạy hơn 380 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận, hồi sinh, Bounce Brawl). `tests/soak.tscn` cho một bot chơi ngẫu nhiên chế độ vô tận và cả 3 màn để dò lỗi lúc chạy (dòng `ANOMALY` là chỗ cần xem). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.

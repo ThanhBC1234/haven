@@ -4,6 +4,8 @@ extends Node2D                          # cảnh chế độ đấu 2 người (
 ## Ghi 1 điểm khi: dẫm đầu đối thủ (stomp), đối thủ rơi xuống vực (pit) hoặc đối thủ chạm gai (spikes).
 ## Ai đạt WIN_SCORE điểm trước thì thắng. Chết = bóng vỡ, hồi sinh ở chỗ xuất phát của mình sau một lúc, miễn sát thương ngắn.
 ## Chống câu giờ: quá `stall_timeout` giây không ai ghi điểm thì gai mọc ở mặt đất, bò dần vào giữa từ hai bên.
+## Hết chỗ mọc gai mà vẫn chưa ai ghi điểm: chờ `sudden_death_delay` giây rồi SUDDEN DEATH, một hàng gai kín bề ngang dâng từ đáy lên.
+## Có điểm (hoặc hết trận) thì gai chống câu giờ và hàng gai dâng đều biến mất, giờ tính lại từ đầu.
 ##
 ## ---- Phần công khai cho các tính năng thêm sau (sự kiện ngẫu nhiên, vật phẩm, bot) ----
 ##   balls[0] = người chơi 1, balls[1] = người chơi 2      scores[0], scores[1] = điểm
@@ -15,7 +17,10 @@ extends Node2D                          # cảnh chế độ đấu 2 người (
 ##   events (BrawlEvents) = sự kiện ngẫu nhiên: events.start_event(id), events.stop_event(), events.active_event, events.enabled...
 ##   items (BrawlItems) = vật phẩm troll: items.held, items.give(ball, id), items.use(ball), items.spawn_box(), items.enabled...
 ##   leader = người dẫn điểm (null khi hoà): đội vương miện và to hơn 25% (LEADER_SCALE), nên dễ bị dẫm hơn
+##   vs_bot = true: người chơi 2 do máy điều khiển; bot (BrawlBot, scripts/brawl_bot.gd) = nút điều khiển đó (null khi không chơi với máy)
+##   player_name(ball) = tên hiện trên màn hình: "P1", "P2", hoặc "BOT" (bóng 2 khi chơi với máy)
 ##   Câu châm chọc khi có điểm: BrawlData.TAUNTS (bốc ngẫu nhiên, không lặp liền nhau)
+##   sudden_death_active = đang có hàng gai dâng;  hazard_y() = toạ độ y thế giới của đỉnh gai (INF khi chưa có): đáy bóng chạm tới đó là chết ("spikes")
 
 signal point_scored(scorer: Ball, victim: Ball, cause: String)   # có người ghi điểm; cause: "stomp", "pit", "spikes", "bomb" (hoặc chữ khác do sự kiện / vật phẩm đặt)
 signal match_started                    # hết phần giới thiệu, trận bắt đầu (bóng điều khiển được)
@@ -44,6 +49,8 @@ static var _last_arena := -1            # đấu trường của trận trước
 @export var win_panel_delay := 1.0      # đạt điểm thắng rồi chờ bao lâu mới hiện bảng thắng
 @export var stall_timeout := 30.0       # bao nhiêu giây không ai ghi điểm thì bắt đầu mọc gai (bài test rút ngắn con số này)
 @export var stall_step := 2.0           # gai mọc thêm một ô (mỗi bên) sau mỗi bấy nhiêu giây
+@export var sudden_death_delay := 4.0   # sàn đã kín gai rồi chờ bấy nhiêu giây thì SUDDEN DEATH (hàng gai bắt đầu dâng)
+@export var sudden_death_speed := 35.0  # hàng gai dâng bấy nhiêu pixel/giây (từ đáy lên bệ cao nhất chừng 10 - 12 giây)
 
 @onready var camera: Camera2D = $Camera   # camera cố định
 @onready var hud: BrawlHud = $HUD/Hud     # giao diện: điểm, thông báo, bảng thắng
@@ -59,9 +66,15 @@ var winner: Ball = null                 # người thắng (null khi chưa hết
 var events: BrawlEvents                 # sự kiện ngẫu nhiên (scripts/brawl_events.gd): events.start_event(id), events.active_event...
 var items: BrawlItems                   # vật phẩm troll (scripts/brawl_items.gd): items.held, items.give(), items.use()...
 var leader: Ball = null                 # người đang dẫn điểm (null = hoà hoặc chưa/đã hết trận): đội vương miện, to hơn LEADER_SCALE
-var vs_bot := false                     # chế độ đánh với máy (chỉ lưu cờ; bot sẽ làm ở phần sau)
+var vs_bot := false                     # chế độ đánh với máy: người chơi 2 do BrawlBot điều khiển
+var bot: BrawlBot = null                # máy điều khiển người chơi 2 (null khi không chơi với máy)
 var stall_active := false               # đang trong giai đoạn gai chống câu giờ
 var stall_spikes: Array[Spikes] = []    # các gai chống câu giờ đang có trên sàn
+var sudden_death_active := false        # đang có hàng gai dâng (SUDDEN DEATH)
+var _sd_wait := 0.0                     # sàn đã kín gai được bao lâu (đếm tới sudden_death_delay)
+var _sd_y := INF                        # y thế giới của đỉnh gai đang dâng (INF = chưa có)
+var _sd_pause := 0.0                    # > 0: hàng gai đứng yên bấy nhiêu giây nữa (vừa có người hồi sinh)
+var _sd_row: HazardRow = null           # hình hàng gai đang dâng (null = chưa có)
 var _stall_time := 0.0                  # đã bao lâu rồi không ai ghi điểm
 var _stall_next := 0.0                  # còn bao lâu nữa gai mọc thêm
 var _stall_left: Array[int] = []        # các cột còn lại để mọc gai phía bên trái (từ ngoài vào trong)
@@ -121,7 +134,11 @@ func _ready() -> void:
 	items = BrawlItems.new()                      # vật phẩm troll (hộp "?", súng đẩy, chuối, đổi chỗ, bẫy lò xo); tạo SAU events để nghe sự kiện đúng thứ tự
 	items.name = "Items"                          # tên node cho dễ tìm
 	add_child(items)                              # thêm vào cảnh
-	hud.setup(WIN_SCORE)                        # cài giao diện
+	if vs_bot:                                    # chơi với máy: người chơi 2 do bot điều khiển (bấm phím p2_* như người)
+		bot = BrawlBot.new()                      # máy
+		bot.name = "Bot"                          # tên node cho dễ tìm
+		add_child(bot)                            # thêm vào cảnh (sau bóng, sự kiện, vật phẩm: bot nối vào chúng)
+	hud.setup(WIN_SCORE, vs_bot)                # cài giao diện (chơi với máy thì ghi "BOT" thay "P2")
 	hud.rematch_pressed.connect(func() -> void: Game.start_brawl(Game.brawl_vs_bot))   # bấm Rematch: vào trận mới
 	hud.menu_pressed.connect(Game.go_to_menu)     # bấm Menu: về menu
 	_start_intro()                                # "READY... BOUNCE!" rồi mới cho đấu
@@ -234,6 +251,13 @@ func kill(victim: Ball, cause: String) -> void:
 	_death_sequence(victim, cause, not over)      # nạn nhân vỡ; hồi sinh nếu trận còn tiếp
 
 
+## Tên hiện trên màn hình của `ball`: "P1" / "P2", riêng bóng 2 khi chơi với máy là "BOT".
+func player_name(ball: Ball) -> String:
+	if vs_bot and ball == balls[1]:               # bóng 2 do máy điều khiển
+		return "BOT"
+	return "P%d" % ball.player_id                 # tên thường
+
+
 ## Chữ thông báo cho một điểm, vd "P1 STOMPS P2!": bốc ngẫu nhiên một câu trong BrawlData.TAUNTS theo nguyên nhân
 ## ("stomp", "pit", "spikes", "bomb", còn lại là "default"), không bao giờ trùng câu ngay trước.
 func _point_text(scorer: Ball, victim: Ball, cause: String) -> String:
@@ -241,7 +265,7 @@ func _point_text(scorer: Ball, victim: Ball, cause: String) -> String:
 	var options: Array = pool.filter(func(line: String) -> bool: return line != _last_taunt)   # bỏ câu vừa dùng
 	var line: String = options[randi() % options.size()]   # bốc một câu
 	_last_taunt = line                            # nhớ để lần sau không trùng
-	return line.format({"s": "P%d" % scorer.player_id, "v": "P%d" % victim.player_id})   # thay tên người chơi vào câu
+	return line.format({"s": player_name(scorer), "v": player_name(victim)})   # thay tên người chơi vào câu
 
 
 ## Hết trận: khoá người thắng đứng yên, báo tín hiệu, một lúc sau hiện bảng thắng.
@@ -281,6 +305,10 @@ func _respawn(ball: Ball) -> void:
 	ball.collision_layer = BALL_LAYER             # va chạm trở lại
 	ball.show()                                   # hiện bóng
 	ball.invuln = RESPAWN_INVULN                  # miễn sát thương, không bị dẫm lấy điểm
+	if sudden_death_active and _sd_y < ball.global_position.y + ball.radius + sudden_death_speed * (RESPAWN_INVULN + 1.0):   # hàng gai dâng sát chỗ hồi sinh
+		_sd_y = level.size.y                      # hạ hàng gai về đáy đấu trường (dưới chân người vừa hồi sinh)
+		_sd_pause = RESPAWN_INVULN                # và giữ yên suốt thời gian miễn sát thương: không bao giờ chết ngay lúc hồi sinh
+		_place_hazard_row()                       # cập nhật hình
 	ball.dead = not match_running                 # còn trận thì sống lại; hết trận thì đứng yên
 	player_respawned.emit(ball)                   # báo cho các tính năng khác
 
@@ -375,6 +403,18 @@ func floor_row() -> int:
 	return level.rows.size() - 3                  # hai hàng cuối là đất, hàng ngay trên là "mặt đất"
 
 
+## Các cột gai chống câu giờ sắp mọc (mỗi bên tối đa `count` cột kế tiếp); rỗng khi chưa tới giai đoạn gai. Bot dùng để không đứng chỗ sắp có gai.
+func upcoming_stall_columns(count := 2) -> Array[int]:
+	var cols: Array[int] = []                     # các cột sắp mọc gai
+	if not stall_active:                          # chưa hết giờ: chưa có gai nào
+		return cols
+	for i in mini(count, _stall_left.size()):     # bên trái: các cột đầu danh sách mọc trước
+		cols.append(_stall_left[i])
+	for i in mini(count, _stall_right.size()):    # bên phải
+		cols.append(_stall_right[i])
+	return cols
+
+
 ## Có thể mọc gai ở cột `c` không: dưới là đất, ô mặt đất còn trống (hoặc là chỗ xuất phát), chưa có gai / lò xo.
 func _can_spike(c: int) -> bool:
 	var r := floor_row()                          # hàng mặt đất
@@ -390,6 +430,14 @@ func _reset_stall() -> void:
 		if is_instance_valid(s):                  # gai còn tồn tại
 			s.queue_free()                        # xoá khỏi màn
 	stall_spikes.clear()                          # bỏ danh sách
+	sudden_death_active = false                   # bỏ luôn hàng gai dâng
+	_sd_wait = 0.0                                # tính lại giờ chờ
+	_sd_pause = 0.0                               # hết giữ yên
+	_sd_y = INF                                   # không còn mặt gai
+	if is_instance_valid(_sd_row):                # hình hàng gai còn tồn tại
+		level.remove_child(_sd_row)               # gỡ ngay khỏi màn (không chờ cuối khung)
+		_sd_row.queue_free()                      # rồi xoá
+	_sd_row = null                                # không còn
 	_stall_left.clear()                           # lập lại danh sách cột bên trái: từ mép ngoài vào giữa
 	_stall_right.clear()                          # lập lại danh sách cột bên phải
 	var cols := level.cols                        # số cột
@@ -410,6 +458,14 @@ func _update_stall(delta: float) -> void:
 	if not stall_active:                          # vừa hết giờ
 		stall_active = true                       # bắt đầu giai đoạn gai
 		hud.flash("NO POINTS - SPIKES!", 1.4, Color("#ffb020"))   # cảnh báo
+	if sudden_death_active:                       # hàng gai đang dâng
+		_rise_hazard(delta)                       # dâng thêm và giết ai chạm gai
+		return
+	if _stall_left.is_empty() and _stall_right.is_empty():   # sàn đã hết chỗ mọc gai
+		_sd_wait += delta                         # đếm giờ chờ
+		if _sd_wait >= sudden_death_delay:        # chờ đủ
+			_start_sudden_death()                 # bắt đầu hàng gai dâng
+		return
 	_stall_next -= delta                          # đếm ngược tới gai kế tiếp
 	if _stall_next > 0.0:                         # chưa tới lúc
 		return
@@ -428,3 +484,74 @@ func _add_stall_spike(c: int) -> void:
 	stall_spikes.append(s)                        # lưu để xoá khi có điểm
 	s.scale = Vector2(1.0, 0.1)                   # bắt đầu thấp lè tè
 	s.create_tween().tween_property(s, "scale:y", 1.0, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)   # nhô lên (tween gắn vào gai, gai bị xoá thì tween tự dừng)
+
+
+# ---- SUDDEN DEATH: hàng gai dâng từ đáy ----
+
+## Toạ độ y thế giới của đỉnh hàng gai đang dâng; INF khi chưa có (so sánh với đáy bóng: y của bóng + bán kính >= giá trị này là chết).
+func hazard_y() -> float:
+	return _sd_y if sudden_death_active else INF   # chưa SUDDEN DEATH: vô cực (không chỗ nào nguy hiểm)
+
+
+## Bắt đầu SUDDEN DEATH: báo trên màn hình, dựng hàng gai ngay dưới đáy đấu trường rồi cho dâng lên.
+func _start_sudden_death() -> void:
+	sudden_death_active = true                    # bật
+	_sd_y = level.size.y                          # đỉnh gai nằm ở đáy đấu trường (cạnh dưới màn hình)
+	_sd_pause = 0.0                               # dâng ngay
+	_sd_row = HazardRow.new()                     # dựng hình hàng gai
+	_sd_row.width = level.size.x                  # rộng kín đấu trường
+	level.add_child(_sd_row)                      # thêm vào màn (vẽ đè lên đất: gai xuyên qua bệ)
+	_place_hazard_row()                           # đặt đúng độ cao
+	hud.flash("SUDDEN DEATH!", 1.6, Color("#ff4040"))   # báo động
+
+
+## Đặt hình hàng gai theo `_sd_y`: gốc hình nằm ở chân gai (thấp hơn đỉnh gai một chiều cao gai).
+func _place_hazard_row() -> void:
+	if is_instance_valid(_sd_row):                # hình còn tồn tại
+		_sd_row.position = Vector2(0.0, _sd_y + HazardRow.SPIKE_HEIGHT)   # chân gai ở dưới đỉnh gai
+
+
+## Mỗi khung khi SUDDEN DEATH: dâng hàng gai (trừ lúc đang giữ yên) rồi giết người sống, không miễn sát thương, mà đáy bóng chạm tới đỉnh gai.
+## Chỉ so độ cao nên bệ đứng không cản được: hàng gai xuyên qua đất. Giết một người là có điểm, hàng gai biến mất ngay (kill gọi _reset_stall).
+func _rise_hazard(delta: float) -> void:
+	if _sd_pause > 0.0:                           # đang giữ yên (vừa có người hồi sinh)
+		_sd_pause -= delta                        # hết dần
+	else:
+		_sd_y -= sudden_death_speed * delta       # dâng lên
+	_place_hazard_row()                           # cập nhật hình
+	var victim: Ball = null                       # người bị gai giết khung này (cả hai cùng chạm thì lấy người lún sâu hơn, bằng nhau thì bốc thăm cho công bằng)
+	var deepest := 0.0                            # độ lún của người đó vào gai (pixel)
+	for ball in balls:                            # xét từng người chơi
+		if ball.dead or ball.invuln > 0.0:        # đã chết / đang miễn sát thương
+			continue
+		var depth := ball.global_position.y + ball.radius - _sd_y   # đáy bóng lún qua đỉnh gai bao nhiêu (< 0: chưa chạm)
+		if depth >= 0.0 and (victim == null or depth > deepest + 0.5 or (absf(depth - deepest) <= 0.5 and randf() < 0.5)):
+			victim = ball                         # người này chết
+			deepest = depth                       # nhớ độ lún
+	if victim != null:                            # có người chạm gai
+		kill(victim, "spikes")                    # chết vì gai: đối thủ ghi điểm, hàng gai bị dọn (kill gọi _reset_stall)
+
+
+## Hình hàng gai dâng: một hàng gai nhỏ (giống ô gai của đấu trường) kín bề ngang, bên dưới là khối tối kín tới hết màn hình.
+## Gốc toạ độ ở chân gai: gai nhô lên (y âm), khối tối nằm ở y dương.
+class HazardRow extends Node2D:
+	const SPIKE_WIDTH := 16.0                 # bề rộng một chiếc gai (bằng gai trong scripts/objects/spikes.gd)
+	const SPIKE_HEIGHT := 16.0                # chiều cao một chiếc gai
+	const FILL_HEIGHT := 900.0                # khối tối dài xuống dưới chừng này (đủ phủ hết màn hình)
+	const SPIKE_COLOR := Color("#b9c4b0")     # màu gai (bằng gai thường)
+	const EDGE_COLOR := Color("#2a3328")      # màu viền gai (bằng gai thường)
+	const FILL_COLOR := Color("#171c16")      # màu khối tối bên dưới (tối hơn viền gai)
+	var width := 1280.0                       # bề ngang cần phủ
+
+	## Vẽ trên đất và bóng.
+	func _init() -> void:
+		z_index = 5                           # nằm trên đất, bóng và gai thường (dưới vương miện)
+
+	## Khối tối bên dưới rồi cả hàng gai; vẽ một lần, di chuyển bằng position.
+	func _draw() -> void:
+		draw_rect(Rect2(0.0, 0.0, width, FILL_HEIGHT), FILL_COLOR)   # khối tối: nhìn như mặt sàn đang dâng
+		for i in ceili(width / SPIKE_WIDTH):  # từng chiếc gai trong hàng
+			var x := i * SPIKE_WIDTH          # mép trái của chiếc gai
+			var tri := PackedVector2Array([Vector2(x, 0.0), Vector2(x + SPIKE_WIDTH / 2.0, -SPIKE_HEIGHT), Vector2(x + SPIKE_WIDTH, 0.0)])   # chân trái, đỉnh, chân phải
+			draw_colored_polygon(tri, SPIKE_COLOR)   # tô gai màu xám
+			draw_polyline(tri, EDGE_COLOR, 1.5)   # viền gai màu tối

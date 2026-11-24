@@ -12,6 +12,8 @@ const LOGO_SIZE := Vector2(410, 150)                # kích thước hiển th�
 @onready var quit_button: Button = $Center/Box/QuitButton   # nút thoát game
 
 var brawl_button: Button                # nút BRAWL 2P (chế độ đấu 2 người)
+var bot_button: Button                  # nút BRAWL VS BOT (đấu với máy), nằm cạnh nút BRAWL 2P trong cùng một hàng
+var brawl_row: HBoxContainer            # hàng chứa hai nút Brawl, nằm ngay dưới lưới nút màn
 var _demo_ball: Ball                    # nhân vật đứng nghịch ở dải đất
 var _demo_start := Vector2.ZERO         # chỗ đứng ban đầu, để đưa về khi rơi ra ngoài
 var _howto: PanelContainer              # bảng HOW TO PLAY (null = đang đóng)
@@ -92,15 +94,26 @@ func _ready() -> void:
 	bank_text.text = "%d stars collected" % Game.total_stars   # vd: 12 stars collected
 	bank_text.add_theme_color_override("font_color", Color("#f7d046"))   # chữ màu vàng
 	bank.add_child(bank_text)                          # đặt chữ sau icon
-	brawl_button = Button.new()                        # nút chế độ đấu 2 người, một hàng rộng ngay dưới lưới nút
+	brawl_row = HBoxContainer.new()                    # một hàng rộng ngay dưới lưới nút, chứa hai nút Brawl cạnh nhau
+	brawl_row.add_theme_constant_override("separation", 12)   # khoảng cách giữa hai nút (bằng khoảng cách ngang của lưới nút màn)
+	brawl_button = Button.new()                        # nút chế độ đấu 2 người
 	brawl_button.text = "BRAWL 2P"                     # chữ trên nút
-	brawl_button.custom_minimum_size = Vector2(0, 56)   # cao 56; chiều ngang tự giãn rộng đúng bằng lưới nút màn
+	brawl_button.custom_minimum_size = Vector2(0, 56)   # cao 56
+	brawl_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # hai nút chia đều bề ngang hàng
 	brawl_button.add_theme_color_override("font_color", Color("#ff8e9c"))   # chữ đỏ hồng, nhắc màu người chơi 1
 	brawl_button.pressed.connect(Game.start_brawl.bind(false))   # bấm là vào chế độ đấu 2 người
-	level_grid.get_parent().add_child(brawl_button)   # gắn vào khối chứa lưới nút
-	level_grid.get_parent().move_child(brawl_button, level_grid.get_index() + 1)   # đặt ngay dưới lưới nút
+	brawl_row.add_child(brawl_button)                  # đặt vào hàng
+	bot_button = Button.new()                          # nút đấu với máy (người chơi 2 là bot)
+	bot_button.text = "BRAWL VS BOT"                   # chữ trên nút
+	bot_button.custom_minimum_size = Vector2(0, 56)    # cao 56
+	bot_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # chia đều bề ngang
+	bot_button.add_theme_color_override("font_color", Color("#8ec9ff"))   # chữ xanh nhạt, nhắc màu người chơi 2 (máy)
+	bot_button.pressed.connect(Game.start_brawl.bind(true))   # bấm là vào đấu với máy
+	brawl_row.add_child(bot_button)                    # đặt vào hàng
+	level_grid.get_parent().add_child(brawl_row)       # gắn vào khối chứa lưới nút
+	level_grid.get_parent().move_child(brawl_row, level_grid.get_index() + 1)   # đặt ngay dưới lưới nút
 	level_grid.get_parent().add_child(bank)     # gắn vào khối chứa lưới nút
-	level_grid.get_parent().move_child(bank, brawl_button.get_index() + 1)   # đặt ngay dưới nút BRAWL 2P
+	level_grid.get_parent().move_child(bank, brawl_row.get_index() + 1)   # đặt ngay dưới hàng nút Brawl
 	level_grid.columns = 2                             # các nút màn xếp 2 cột cho gọn
 	level_grid.add_theme_constant_override("h_separation", 12)   # khoảng cách ngang giữa hai cột
 	var bottom_row := HBoxContainer.new()              # hàng dưới cùng: HOW TO PLAY và Quit

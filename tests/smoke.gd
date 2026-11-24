@@ -6,6 +6,7 @@ extends Node
 var failures := 0
 var shots_dir := ""
 var hurts := 0
+var bot_seed_offset := 0                # cộng vào hạt giống của các mục bot (godot ... -- --bot-seed=N): thử xem mục nào mong manh với hạt giống khác
 
 
 ## Chạy lần lượt các kiểm tra; in "ok" hoặc "FAIL" cho từng mục.
@@ -13,9 +14,17 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shots="):
 			shots_dir = a.trim_prefix("--shots=")
+		if a.begins_with("--bot-seed="):
+			bot_seed_offset = int(a.trim_prefix("--bot-seed="))
 	Game.save_enabled = false                      # không ghi đè file lưu thật của người chơi
 	if OS.get_cmdline_user_args().has("--only-items"):   # lúc đang làm vật phẩm: chạy riêng phần này cho nhanh (godot ... -- --only-items)
 		await _brawl_item_checks()
+		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
+		get_tree().quit(1 if failures > 0 else 0)
+		return
+
+	if OS.get_cmdline_user_args().has("--only-bot"):     # lúc đang làm bot: chạy riêng phần này cho nhanh (godot ... -- --only-bot)
+		await _brawl_bot_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
@@ -25,12 +34,16 @@ func _ready() -> void:
 	add_child(menu)
 	await _frames(3)
 	_expect(menu.level_grid.get_child_count() == LevelData.LEVELS.size() + 1, "menu grid has Endless + one button per level (BRAWL 2P is its own wide row below the grid)")
-	_expect(menu.brawl_button != null and menu.brawl_button.text == "BRAWL 2P" and menu.brawl_button.get_parent() == menu.level_grid.get_parent(), "menu has the BRAWL 2P button")
+	_expect(menu.brawl_button != null and menu.brawl_button.text == "BRAWL 2P" and menu.brawl_button.get_parent() == menu.brawl_row and menu.brawl_row.get_parent() == menu.level_grid.get_parent(), "menu has the BRAWL 2P button (in the Brawl row under the level grid)")
+	_expect(menu.bot_button != null and menu.bot_button.text == "BRAWL VS BOT" and menu.bot_button.get_parent() == menu.brawl_row, "menu has the BRAWL VS BOT button next to BRAWL 2P in the same row")
 	var menu_rect := Rect2(Vector2.ZERO, Vector2(1280, 720))
-	var brawl_rect: Rect2 = menu.brawl_button.get_global_rect()
+	var brawl_rect: Rect2 = menu.brawl_row.get_global_rect()
+	var two_rect: Rect2 = menu.brawl_button.get_global_rect()
+	var bot_rect: Rect2 = menu.bot_button.get_global_rect()
 	var tidy := menu_rect.encloses(brawl_rect) and not brawl_rect.intersects(menu.level_grid.get_global_rect()) and not brawl_rect.intersects(menu.help.get_global_rect()) and menu_rect.encloses(menu.quit_button.get_global_rect())
-	_expect(tidy, "BRAWL 2P fits the 1280x720 screen and does not overlap the level grid, the help line or Quit (%s)" % brawl_rect)
-	_expect(menu.brawl_button.pressed.get_connections().size() >= 1 and Game.has_method("start_brawl") and not Game.brawl_vs_bot, "BRAWL 2P is wired to Game.start_brawl (vs_bot defaults to false)")
+	_expect(tidy, "the Brawl row fits the 1280x720 screen and does not overlap the level grid, the help line or Quit (%s)" % brawl_rect)
+	_expect(brawl_rect.encloses(two_rect) and brawl_rect.encloses(bot_rect) and not two_rect.intersects(bot_rect) and two_rect.position.x < bot_rect.position.x and absf(two_rect.size.x - bot_rect.size.x) < 2.0, "BRAWL 2P (left) and BRAWL VS BOT (right) sit side by side, equal width, inside the row (%s | %s)" % [two_rect, bot_rect])
+	_expect(menu.brawl_button.pressed.get_connections().size() >= 1 and menu.bot_button.pressed.get_connections().size() >= 1 and Game.has_method("start_brawl") and not Game.brawl_vs_bot, "both Brawl buttons are wired to Game.start_brawl (vs_bot defaults to false)")
 	await _shot("00_menu")
 	menu.queue_free()
 
@@ -491,8 +504,10 @@ func _ready() -> void:
 
 	await _two_player_checks()                     # nền tảng cho chế độ 2 người chơi
 	await _brawl_checks()                          # chế độ đấu 2 người (Bounce Brawl)
+	await _brawl_sudden_death_checks()             # SUDDEN DEATH: hàng gai dâng khi sàn đã kín gai mà vẫn chưa ai ghi điểm
 	await _brawl_event_checks()                    # sự kiện ngẫu nhiên của chế độ đấu (roulette, 6 sự kiện)
 	await _brawl_item_checks()                     # vật phẩm troll, vương miện người dẫn điểm, câu châm chọc
+	await _brawl_bot_checks()                      # máy (bot) chơi thay người chơi 2
 
 	print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 	get_tree().quit(1 if failures > 0 else 0)
@@ -2017,6 +2032,380 @@ func _brawl_item_checks() -> void:
 	_expect(br.hud.message_label.text in _taunt_options("spikes", 2, 1), "taunts: a real spikes point shows one of the spikes lines ('%s')" % br.hud.message_label.text)
 	br.queue_free()
 	await _frames(2)
+
+
+## Rút ngắn mọi giờ chờ của SUDDEN DEATH và coi như sàn không còn cột nào để mọc gai (xoá danh sách cột): hàng gai dâng bắt đầu chừng 0,3 giây sau, dâng `speed` pixel/giây.
+func _sd_fast(br: Brawl, speed: float) -> void:
+	br.stall_timeout = 0.2
+	br.sudden_death_delay = 0.1
+	br.sudden_death_speed = speed
+	br._reset_stall()                                # tính giờ lại từ bây giờ
+	br._stall_left.clear()                           # không còn cột sàn nào để mọc gai
+	br._stall_right.clear()
+
+
+## Số hình hàng gai dâng (Brawl.HazardRow) đang nằm trong màn.
+func _hazard_rows(br: Brawl) -> int:
+	var n := 0
+	for child in br.level.get_children():
+		if child is Brawl.HazardRow:
+			n += 1
+	return n
+
+
+## SUDDEN DEATH (hàng gai dâng khi sàn đã kín gai mà vẫn chưa ai ghi điểm): giá trị mặc định, thời điểm bắt đầu, dâng lên, giết người đứng sàn,
+## bệ cao nhất sống tới khi gai chạm, có điểm thì dọn sạch và tính giờ lại, hồi sinh không rơi vào gai, không chạy trước / sau trận.
+func _brawl_sudden_death_checks() -> void:
+	for c in get_children():                         # dọn cảnh còn sót lại
+		c.queue_free()
+	await _frames(3)
+
+	# --- Giá trị mặc định: đủ chậm để phản ứng, đủ nhanh để tới bệ cao nhất trong ~25 giây ---
+	var probe: Brawl = load("res://scenes/brawl.tscn").instantiate()   # chưa thêm vào cảnh: chỉ để đọc giá trị mặc định
+	var def_speed: float = probe.sudden_death_speed
+	_expect(probe.sudden_death_delay >= 2.0 and probe.sudden_death_delay <= 8.0 and def_speed >= 25.0 and def_speed <= 45.0 and not probe.sudden_death_active and probe.hazard_y() == INF, "sudden death defaults: delay %.1f s, speed %.0f px/s, inactive, hazard_y() is INF" % [probe.sudden_death_delay, def_speed])
+	probe.free()
+	for i in BrawlData.ARENAS.size():
+		var rows: PackedStringArray = []
+		for line in String(BrawlData.ARENAS[i]["map"]).split("\n"):
+			if line.strip_edges() != "":
+				rows.append(line)
+		var top_row := rows.size()                   # hàng của bệ cao nhất (hàng đầu tiên có đất ở giữa)
+		for r in rows.size():
+			for c in range(1, rows[r].length() - 1):
+				if rows[r][c] == "#":
+					top_row = mini(top_row, r)
+		var to_top := (rows.size() - top_row) * Level.TILE / def_speed   # từ đáy tới mặt bệ cao nhất
+		var to_ceiling := (rows.size() * Level.TILE + 16.0) / def_speed  # từ đáy tới trần
+		_expect(to_top >= 8.0 and to_top <= 25.0 and to_ceiling <= 25.0, "arena %d: the rising spikes need %.1f s to reach the highest platform (reaction time >= 8 s) and %.1f s to reach the ceiling (<= 25 s)" % [i, to_top, to_ceiling])
+
+	# --- Bắt đầu sau khi sàn kín gai (và chờ đủ giờ), hàng gai dâng, người miễn sát thương không bị giết, có điểm thì dọn sạch và tính giờ lại ---
+	var br := await _make_brawl(0)
+	await _brawl_ready(br)
+	br.stall_timeout = 0.3
+	br.stall_step = 0.05
+	br.sudden_death_delay = 0.5
+	br.sudden_death_speed = 120.0
+	br._reset_stall()
+	var a := br.balls[0]
+	var b := br.balls[1]
+	a.invuln = 9999.0                                # đứng giữa gai sàn mà không chết, để thử riêng hàng gai dâng
+	b.invuln = 9999.0
+	var full_frames := 0                             # số khung từ lúc sàn kín tới lúc bắt đầu
+	for i in 600:
+		await _frames(1)
+		if br.sudden_death_active:
+			break
+		if br._stall_left.is_empty() and br._stall_right.is_empty():
+			full_frames += 1
+	_expect(br.sudden_death_active and br.stall_spikes.size() >= 10 and br._stall_left.is_empty() and br._stall_right.is_empty(), "sudden death starts only after the floor is full of stall spikes (%d spikes)" % br.stall_spikes.size())
+	_expect(full_frames >= 28 and full_frames <= 34, "...and after the configured delay (%d frames for 0.5 s)" % full_frames)
+	_expect(absf(br.hazard_y() - br.level.size.y) < 5.0 and br.hud.message_label.text == "SUDDEN DEATH!" and _hazard_rows(br) == 1, "the hazard starts at the bottom of the arena (y=%.0f), flashes SUDDEN DEATH! and draws one spike row" % br.hazard_y())
+	var y1 := br.hazard_y()
+	await _frames(30)
+	var y2 := br.hazard_y()
+	_expect(absf((y1 - y2) - 60.0) < 3.0, "the hazard rises at sudden_death_speed (%.1f px in 0.5 s, expected 60)" % (y1 - y2))
+	await _frames(20)
+	_expect(br.hazard_y() < a.global_position.y and br.scores == [0, 0] and not a.dead and not b.dead, "players with spawn protection are ignored by the hazard (it is above them and nobody died)")
+	br.kill(b, "pit")                                # có điểm: dọn sạch
+	await _frames(2)
+	_expect(not br.sudden_death_active and br.hazard_y() == INF and br.stall_spikes.is_empty() and not br.stall_active and _hazard_rows(br) == 0 and br._stall_time < 0.2, "a point clears the hazard and the stall spikes and restarts the timer")
+	await _frames(12)                                # chưa tới 0,3 giây
+	_expect(not br.stall_active and not br.sudden_death_active and br.hazard_y() == INF, "nothing restarts before the stall timeout has passed again")
+	await _frames(30)
+	b.invuln = 9999.0                                # P2 đã hồi sinh: đứng giữa gai sàn không chết
+	var again := false
+	for i in 600:
+		await _frames(1)
+		if br.sudden_death_active:
+			again = true
+			break
+	_expect(again and _hazard_rows(br) == 1, "...and sudden death comes back after another full quiet period")
+	await _free_brawl(br)
+
+	# --- Người đứng sàn chết, đối thủ (đứng bệ cao) được điểm ---
+	br = await _make_brawl(0)
+	await _brawl_ready(br)
+	a = br.balls[0]
+	b = br.balls[1]
+	var causes: Array[String] = []
+	br.point_scored.connect(func(_s: Ball, _v: Ball, cause: String) -> void: causes.append(cause))
+	b.teleport(Vector2(640, 340))                    # P2 lên bệ cao nhất ở giữa, P1 đứng ở chỗ xuất phát trên sàn
+	_sd_fast(br, 150.0)
+	await _frames(8)
+	_expect(a.global_position.y > 600.0 and not a.dead and br.scores == [0, 0] and not br.sudden_death_active, "P1 stands on the floor, P2 on the top platform, nothing has happened yet")
+	for i in 300:
+		await _frames(1)
+		if br.scores[0] + br.scores[1] > 0:
+			break
+	_expect(br.scores == [0, 1] and causes == ["spikes"] and not b.dead, "the player on the floor dies to the rising spikes and the opponent gets the point (scores %s, causes %s)" % [str(br.scores), str(causes)])
+	_expect(not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0, "the hazard is removed after the kill")
+	await _free_brawl(br)
+
+	# --- Người đứng bệ cao nhất sống tới khi gai tới chân, rồi chết ---
+	br = await _make_brawl(0)
+	await _brawl_ready(br)
+	a = br.balls[0]
+	b = br.balls[1]
+	a.teleport(Vector2(560, 340))                    # cả hai lên bệ cao nhất (mặt bệ y = 384); P2 miễn sát thương để chỉ xét P1
+	b.teleport(Vector2(720, 340))
+	b.invuln = 9999.0
+	await _frames(60)
+	var feet := a.global_position.y + a.radius
+	_expect(absf(feet - 384.0) < 4.0, "P1 stands on the highest platform (feet at y=%.1f, platform top 384)" % feet)
+	_sd_fast(br, 120.0)
+	var prev_y := INF
+	var prev_feet := 0.0
+	var seen_above := false                          # đã thấy hàng gai dâng qua đất mà P1 vẫn sống
+	var died := false
+	for i in 600:
+		prev_y = br.hazard_y()
+		prev_feet = a.global_position.y + a.radius
+		await _frames(1)
+		if br.scores[1] > 0:
+			died = true
+			break
+		if prev_y < INF and prev_y > prev_feet + 20.0 and prev_y < 600.0:
+			seen_above = true
+	_expect(seen_above and died and br.scores == [0, 1], "the hazard passes through the floor and lower platforms; P1 on the highest platform survives while it is below")
+	_expect(prev_y - prev_feet < 120.0 / 60.0 + 3.0 and prev_y - prev_feet > -3.0 and prev_y < 400.0, "...and dies exactly when the spike line reaches its feet (line at y=%.1f, feet at y=%.1f)" % [prev_y, prev_feet])
+	await _free_brawl(br)
+
+	# --- Hồi sinh lúc đang SUDDEN DEATH không rơi vào gai ---
+	br = await _make_brawl(0)
+	await _brawl_ready(br)
+	a = br.balls[0]
+	b = br.balls[1]
+	br.respawn_delay = 2.0                           # chờ lâu: hàng gai kịp dâng cao hơn chỗ hồi sinh
+	br.kill(a, "pit")                                # P2 được điểm; P1 vỡ, sắp hồi sinh
+	_sd_fast(br, 300.0)                              # (kill vừa tính lại giờ; đặt lại sau nó)
+	b.invuln = 9999.0                                # P2 không bị hàng gai giết (không làm điểm mới xoá hàng gai)
+	var respawned := false
+	for i in 400:
+		await _frames(1)
+		if a.visible and not a.dead:
+			respawned = true
+			break
+	_expect(respawned and br.sudden_death_active, "P1 respawns while sudden death is active (hazard y=%.1f)" % br.hazard_y())
+	_expect(br.hazard_y() > a.global_position.y + a.radius + 30.0 and a.invuln > 0.0, "respawn rule: the hazard is lowered under the respawn point (hazard y=%.1f, feet y=%.1f)" % [br.hazard_y(), a.global_position.y + a.radius])
+	await _frames(60)                                # cả khoảng miễn sát thương: hàng gai giữ yên, P1 không chết
+	_expect(not a.dead and br.scores == [0, 1] and br.hazard_y() > a.global_position.y + a.radius, "...and the respawned player is not killed by the hazard afterwards (scores %s)" % str(br.scores))
+	await _free_brawl(br)
+
+	# --- Không chạy trước trận (đang READY...) ---
+	br = await _make_brawl(0, 1.0)                   # giới thiệu 1 giây
+	br.stall_timeout = 0.01
+	br.stall_step = 0.01
+	br.sudden_death_delay = 0.01
+	await _frames(30)
+	_expect(not br.match_running and not br.stall_active and not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0, "nothing happens before the match starts (intro)")
+	await _free_brawl(br)
+
+	# --- Không chạy sau khi hết trận; hết trận giữa lúc đang dâng thì dọn hàng gai ---
+	br = await _make_brawl(0)
+	await _brawl_ready(br)
+	a = br.balls[0]
+	b = br.balls[1]
+	a.invuln = 9999.0
+	b.invuln = 9999.0
+	_sd_fast(br, 120.0)
+	for i in 300:
+		await _frames(1)
+		if br.sudden_death_active:
+			break
+	_expect(br.sudden_death_active and _hazard_rows(br) == 1, "sudden death is running before the match ends")
+	br.scores[0] = Brawl.WIN_SCORE - 1
+	br.kill(b, "pit")                                # điểm thứ 5: hết trận
+	await _frames(2)
+	_expect(not br.match_running and not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0 and br.stall_spikes.is_empty(), "the hazard and stall spikes are removed when the match ends")
+	await _frames(120)                               # giờ vẫn rút ngắn: nếu còn chạy thì đã bắt đầu lại
+	_expect(not br.stall_active and not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0, "nothing restarts after the match is over")
+	await _free_brawl(br)
+
+
+## Dựng một trận đấu với máy ở đấu trường `arena`, đã hết giới thiệu, không có sự kiện / hộp tự sinh. Đặt lại hạt giống ngẫu nhiên (`rng_seed`)
+## để mỗi mục kiểm tra chạy y hệt nhau mọi lần, không phụ thuộc mục trước. Cờ Game.brawl_vs_bot được trả về false ngay sau khi dựng.
+func _bot_br(arena: int, rng_seed: int) -> Brawl:
+	seed(rng_seed + bot_seed_offset)                 # bot dùng randf / randi / randfn toàn cục
+	Game.brawl_vs_bot = true
+	var br := await _make_brawl(arena, 0.2)          # sự kiện và hộp tự sinh đã tắt
+	Game.brawl_vs_bot = false                        # các bài sau không bị dính cờ
+	await _brawl_ready(br)
+	return br
+
+
+## Xoá cảnh đấu sau khi các hẹn giờ của nó chạy hết. Xoá ngay sau một cú giết thì cảnh dẹt / hồi sinh / bảng thắng (await hẹn giờ) bị bỏ dở,
+## hẹn giờ và hàm chờ rò rỉ tới lúc thoát chương trình ("ObjectDB instances leaked", "resources still in use").
+func _free_brawl(br: Brawl) -> void:
+	if br.bot != null:
+		br.bot.enabled = false                       # bot ngừng chơi: không có cú giết mới nào mở thêm hẹn giờ trong lúc chờ
+	await _frames(150)                               # 2,5 giây: dài hơn mọi hẹn giờ trong cảnh (dẹt 0,6 + hồi sinh 0,3, bảng thắng, hạt 1,2)
+	br.queue_free()
+	await _frames(2)
+
+
+## Tóm tắt trạng thái bot để in kèm khi một mục kiểm tra thất bại.
+func _bot_state(bot: BrawlBot) -> String:
+	return "[bot at %s dead=%s phase=%s mode=%s hops=%d aborts=%d thoughts=%d last='%s' jump='%s']" % [bot.ball.global_position.round(), bot.ball.dead, bot.phase, bot.mode, bot.hops, bot.aborts, bot.thoughts, bot.last_choice, bot.last_jump]
+
+
+## Có phím nào của người chơi `prefix` ("p1_" / "p2_") đang bị giữ không.
+func _any_pressed(prefix: String) -> bool:
+	for action in ["left", "right", "jump", "use"]:
+		if Input.is_action_pressed(prefix + action):
+			return true
+	return false
+
+
+## Máy (bot) chơi thay người chơi 2: chỉ có khi chơi với máy, chỉ bấm phím p2_*, nhả hết phím khi hết trận / bị xoá, đi về phía người chơi,
+## không nhảy vào vực, nhặt hộp, dùng vật phẩm, ghi được điểm vào mục tiêu đứng yên.
+func _brawl_bot_checks() -> void:
+	for c in get_children():                         # dọn cảnh còn sót lại
+		c.queue_free()
+	await _frames(3)
+	_release_all_keys()
+
+	# --- Chỉ tạo bot khi chơi với máy; điều khiển người chơi 2; HUD và câu châm chọc ghi BOT ---
+	Game.brawl_vs_bot = false
+	var br := await _make_brawl(0, 0.2)
+	_expect(br.bot == null and not br.vs_bot and br.player_name(br.balls[1]) == "P2", "2-player Brawl has no bot (brawl.bot is null, names stay P1 / P2)")
+	await _free_brawl(br)                            # chờ hết phần giới thiệu (hẹn giờ) rồi mới xoá, không thì hẹn giờ bị bỏ dở và rò rỉ
+	br = await _bot_br(0, 101)
+	var bot: BrawlBot = br.bot
+	var a := br.balls[0]
+	var b := br.balls[1]
+	_expect(bot != null and bot.get_parent() == br and br.vs_bot and bot.ball == b and bot.foe == a and bot.player_index == 1 and bot.skill > 0.0 and bot.skill < 1.0, "vs-bot Brawl creates a BrawlBot that controls player 2 (default skill %.2f)" % bot.skill)
+	_expect(br.player_name(b) == "BOT" and br.player_name(a) == "P1" and br.hud.vs_bot, "the right-hand player is named BOT in bot mode (HUD flag set)")
+	br.kill(b, "pit")
+	_expect("BOT" in br.hud.message_label.text and not "P2" in br.hud.message_label.text, "taunts name the bot BOT, never P2 ('%s')" % br.hud.message_label.text)
+	await _frames(60)
+	br.kill(a, "pit")
+	_expect(not "P2" in br.hud.message_label.text, "taunts about P1 never say P2 either ('%s')" % br.hud.message_label.text)
+	await _frames(60)
+	# --- Chỉ bấm phím p2_*, không bao giờ động tới phím p1_* ---
+	var p1_pressed := 0
+	var p2_pressed := 0
+	var heard_launch := [0]
+	b.launched.connect(func() -> void: heard_launch[0] += 1)
+	for i in 240:
+		await _frames(1)
+		if _any_pressed("p1_"):
+			p1_pressed += 1
+		if _any_pressed("p2_"):
+			p2_pressed += 1
+	_expect(p1_pressed == 0 and p2_pressed > 0, "the bot presses only player 2's actions, never player 1's (p1 frames %d, p2 frames %d)" % [p1_pressed, p2_pressed])
+	_expect(heard_launch[0] >= 1 and bot.hops >= 1, "the bot's real key presses make its ball jump (%d launches)" % heard_launch[0])
+	# --- Nhả hết phím khi hết trận ---
+	var waited := 0
+	while bot.held_actions().is_empty() and waited < 600:   # đợi tới lúc bot đang giữ phím
+		await _frames(1)
+		waited += 1
+	_expect(not bot.held_actions().is_empty(), "the bot is holding a key before the match ends %s" % _bot_state(bot))
+	br.scores[1] = Brawl.WIN_SCORE - 1
+	br.kill(a, "pit")                                 # điểm thắng: hết trận
+	await _frames(2)
+	_expect(not br.match_running and bot.held_actions().is_empty() and not _any_pressed("p2_") and bot.phase == "idle", "all the bot's keys are released when the match ends")
+	await _free_brawl(br)
+
+	# --- Nhả hết phím khi bot bị xoá giữa chừng ---
+	br = await _bot_br(1, 102)
+	bot = br.bot
+	waited = 0
+	while bot.held_actions().is_empty() and waited < 600:
+		await _frames(1)
+		waited += 1
+	_expect(_any_pressed("p2_"), "the bot holds a real p2 action (Input sees it)")
+	bot.free()                                        # xoá ngay giữa lúc đang giữ phím
+	_expect(not _any_pressed("p2_"), "all keys are released when the bot node is freed")
+	await _free_brawl(br)
+
+	# --- Chết thì nhả hết phím ---
+	br = await _bot_br(1, 103)
+	bot = br.bot
+	waited = 0
+	while bot.held_actions().is_empty() and waited < 600:
+		await _frames(1)
+		waited += 1
+	br.kill(br.balls[1], "pit")
+	await _frames(2)
+	_expect(bot.held_actions().is_empty() and not _any_pressed("p2_"), "the bot lets go of every key when its ball dies")
+	await _free_brawl(br)
+
+	# --- Đi / nhảy về phía người chơi ---
+	br = await _bot_br(0, 104)
+	bot = br.bot
+	a = br.balls[0]
+	b = br.balls[1]
+	a.teleport(Vector2(60, 625))                      # người chơi 1 đứng yên ở góc trái
+	b.teleport(Vector2(330, 625))                     # bot cùng bên, trước dãy gai: đường tới người chơi 1 là mặt đất phẳng
+	await _frames(40)
+	var start_gap := absf(b.global_position.x - a.global_position.x)
+	var closest := start_gap                          # khoảng cách ngang gần nhất tới người chơi 1 trong 5 giây
+	for i in 60 * 5:
+		await _frames(1)
+		closest = minf(closest, absf(b.global_position.x - a.global_position.x))
+	_expect(bot.hops >= 2 and closest < start_gap - 100.0, "the bot hops toward the player (gap %.0f px -> closest %.0f px in 5 s, %d hops, now at %s)" % [start_gap, closest, bot.hops, b.global_position.round()])
+	await _free_brawl(br)
+
+	# --- Gần mép vực, mục tiêu không với tới: bot không tự nhảy xuống vực ---
+	br = await _bot_br(0, 105)
+	bot = br.bot
+	a = br.balls[0]
+	b = br.balls[1]
+	a.teleport(Vector2(640, 150))                     # người chơi 1 lơ lửng cao trên vực, đứng yên (không ai với tới)
+	await _frames(2)
+	a.freeze = true
+	b.teleport(Vector2(548, 625))                     # bot đứng sát mép vực giữa (vực từ x = 576 tới 704)
+	var pit_deaths := [0]
+	var death_info := [""]
+	br.point_scored.connect(func(_s: Ball, v: Ball, cause: String) -> void:
+		if v == b:
+			pit_deaths[0] += 1
+			death_info[0] = "%s at %s after '%s'" % [cause, v.global_position.round(), bot.last_jump])
+	await _frames(60 * 12)
+	_expect(pit_deaths[0] == 0 and br.scores[0] == 0 and not b.dead, "the bot never jumps into the pit or spikes while the target is out of reach (12 s, deaths %d, %d hops, aborts %d) %s" % [pit_deaths[0], bot.hops, bot.aborts, death_info[0]])
+	a.freeze = false
+	await _free_brawl(br)
+
+	# --- Nhặt hộp gần, rồi dùng vật phẩm ---
+	br = await _bot_br(0, 106)
+	bot = br.bot
+	a = br.balls[0]
+	b = br.balls[1]
+	b.teleport(Vector2(1000, 625))
+	a.teleport(Vector2(60, 625))
+	await _frames(40)
+	var picked := []
+	br.items.item_picked.connect(func(ball: Ball, id: String) -> void: picked.append([ball, id]))
+	var box := br.items.spawn_box("banana", Vector2(1000 + 150, 640.0 - BrawlItems.BOX_LIFT))
+	_expect(box != null and br.items.boxes.size() == 1, "a box was placed 150 px from the bot")
+	await _frames(60 * 6)
+	_expect(picked.any(func(p: Array) -> bool: return p[0] == b), "the bot walks to a nearby box and picks it up (%d picks)" % picked.size())
+	# vật phẩm: cho chuối, đưa cả hai về chỗ gần nhau trên mặt đất; người chơi 1 miễn sát thương để bot không dẫm chết nó giữa chừng
+	br.items.give(b, "banana")
+	a.teleport(Vector2(760, 625))
+	b.teleport(Vector2(1000, 625))
+	a.invuln = 1000.0
+	var used := []
+	br.items.item_used.connect(func(ball: Ball, id: String) -> void: used.append([ball, id]))
+	await _frames(60 * 4)
+	_expect(used.any(func(p: Array) -> bool: return p[0] == b) and bot.items_used >= 1, "the bot uses an item it holds (%s; held '%s', bot %s dead=%s phase=%s mode=%s, P1 %s dead=%s)" % [str(used.map(func(p: Array) -> String: return p[1])), br.items.held[1], b.global_position.round(), b.dead, bot.phase, bot.mode, a.global_position.round(), a.dead])
+	await _free_brawl(br)
+
+	# --- Ghi điểm vào mục tiêu đứng yên trong thời gian hợp lý ---
+	br = await _bot_br(0, 107)
+	bot = br.bot
+	a = br.balls[0]
+	b = br.balls[1]
+	a.teleport(Vector2(100, 625))                     # người chơi 1 đứng yên ở bên trái
+	b.teleport(Vector2(340, 625))                     # bot cùng bên, trước dãy gai
+	var frames_to_point := 0
+	while br.scores[1] == 0 and frames_to_point < 60 * 30:
+		await _frames(1)
+		frames_to_point += 1
+	_expect(br.scores[1] >= 1, "the bot scores at least one point against a standing target within 30 s (%.1f s) %s" % [frames_to_point / 60.0, _bot_state(bot)])
+	await _free_brawl(br)
+	_release_all_keys()
 
 
 ## Chế độ đấu có sẵn: dựng, chờ hết giới thiệu (hộp vật phẩm tự sinh tắt trừ khi `with_items`).

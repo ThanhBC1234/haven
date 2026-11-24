@@ -214,7 +214,7 @@ func _use_banana(ball: Ball, i: int) -> bool:
 		return false
 	_clear_hand(i)                                # chuối đã ném
 	_start_banana(target)                         # đảo phím + quả chuối quay quanh đầu
-	brawl.hud.flash("BANANA! P%d IS DIZZY!" % target.player_id, 1.0, BrawlHud.PLAYER_COLORS[i])   # báo cho cả hai thấy
+	brawl.hud.flash("BANANA! %s IS DIZZY!" % brawl.player_name(target), 1.0, BrawlHud.PLAYER_COLORS[i])   # báo cho cả hai thấy
 	return true
 
 
@@ -225,7 +225,7 @@ func _use_swap(ball: Ball, i: int) -> bool:
 	if not brawl.events.swap_players():           # đổi chỗ
 		return false
 	_clear_hand(i)                                # đã dùng
-	brawl.hud.flash("P%d SWAPPED PLACES!" % ball.player_id, 0.8, BrawlHud.PLAYER_COLORS[i])   # báo
+	brawl.hud.flash("%s SWAPPED PLACES!" % brawl.player_name(ball), 0.8, BrawlHud.PLAYER_COLORS[i])   # báo
 	return true
 
 
