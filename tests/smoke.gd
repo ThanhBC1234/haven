@@ -486,6 +486,7 @@ func _ready() -> void:
 
 	await _two_player_checks()                     # nền tảng cho chế độ 2 người chơi
 	await _brawl_checks()                          # chế độ đấu 2 người (Bounce Brawl)
+	await _brawl_event_checks()                    # sự kiện ngẫu nhiên của chế độ đấu (roulette, 6 sự kiện)
 
 	print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 	get_tree().quit(1 if failures > 0 else 0)
@@ -884,13 +885,14 @@ func _two_player_checks() -> void:
 
 
 ## Dựng cảnh đấu 2 người với đấu trường số `arena`, rút ngắn mọi thời gian chờ để test chạy nhanh (chưa chờ hết phần giới thiệu).
-func _make_brawl(arena := 0, intro := 0.2) -> Brawl:
+func _make_brawl(arena := 0, intro := 0.2, with_events := false) -> Brawl:
 	var br: Brawl = load("res://scenes/brawl.tscn").instantiate()
 	br.arena_index = arena                          # chọn đấu trường cố định cho dễ đặt bóng
 	br.intro_seconds = intro                        # giới thiệu ngắn
 	br.respawn_delay = 0.3                          # hồi sinh nhanh
 	br.win_panel_delay = 0.2                        # bảng thắng hiện nhanh
 	add_child(br)
+	br.events.enabled = with_events                 # sự kiện ngẫu nhiên tắt trừ khi bài test cần (các bài khác không bị sự kiện chen ngang)
 	await _frames(2)
 	return br
 
@@ -1105,6 +1107,326 @@ func _brawl_checks() -> void:
 		min_a = minf(min_a, a.linear_velocity.x)
 	print("    (shove test: victim peak vx %.0f, attacker min vx %.0f)" % [peak_b, min_a])
 	_expect(peak_b > 300.0 and min_a < -100.0, "bumping is shove-y: the bumped ball flies off (%.0f) and the attacker rebounds backwards (%.0f, plain physics leaves it going forward)" % [peak_b, min_a])
+	br.queue_free()
+	await _frames(2)
+
+
+## Các thông số vật lý / điều khiển mà sự kiện có thể đổi của một quả bóng: [trọng lực, độ nảy, ma sát, đảo phím],
+## ba số đầu nhân 1000 và làm tròn thành số nguyên (Godot lưu float 32 bit nên so sánh số thực trực tiếp sẽ lệch).
+func _ev_props(ball: Ball) -> Array:
+	var m := ball.physics_material_override
+	return [roundi(ball.gravity_scale * 1000.0), roundi(m.bounce * 1000.0), roundi(m.friction * 1000.0), ball.reverse_controls]
+
+
+## Số quả bom (BombMarker) đang nổi trên đầu `ball` (không tính cái đã bị xoá).
+func _bomb_markers(ball: Ball) -> int:
+	var n := 0
+	for c in ball.get_children():
+		if c is BrawlEvents.BombMarker and not c.is_queued_for_deletion():
+			n += 1
+	return n
+
+
+## Đặt bóng về chỗ xuất phát và chờ đứng yên.
+func _ev_reset_ball(br: Brawl, ball: Ball) -> void:
+	ball.teleport(br.spawn_of(ball))
+	await _frames(50)
+
+
+## Nhảy thẳng lên (độ mạnh 0.5): trả về độ cao đỉnh nhảy (pixel) so với lúc đứng.
+func _ev_apex(br: Brawl, ball: Ball) -> float:
+	await _ev_reset_ball(br, ball)
+	var start_y := ball.global_position.y
+	var min_y := start_y
+	ball.jump(0, 0.5)
+	for i in 260:
+		await _frames(1)
+		min_y = minf(min_y, ball.global_position.y)
+	return start_y - min_y
+
+
+## Thả bóng từ cao 324 pixel: trả về độ cao nảy lên sau lần chạm đất đầu tiên (pixel, so với mặt đất).
+func _ev_rebound(br: Brawl, ball: Ball) -> float:
+	await _ev_reset_ball(br, ball)
+	var ground_y := ball.global_position.y
+	ball.teleport(Vector2(ball.global_position.x, ground_y - 324.0))
+	var rising := false
+	var min_y := ground_y
+	for i in 160:
+		await _frames(1)
+		if ball.linear_velocity.y < -100.0:
+			rising = true                           # đã chạm đất và đang nảy lên
+		if rising:
+			min_y = minf(min_y, ball.global_position.y)
+	return ground_y - min_y
+
+
+## Đẩy bóng sang phải 250 px/s rồi để trượt 40 khung: trả về quãng đường trượt (pixel).
+func _ev_slide(br: Brawl, ball: Ball) -> float:
+	await _ev_reset_ball(br, ball)
+	var x0 := ball.global_position.x
+	ball.linear_velocity = Vector2(250, 0)
+	await _frames(40)
+	return ball.global_position.x - x0
+
+
+## Sự kiện ngẫu nhiên: bốc thăm không trùng, từng hiệu ứng thật sự có tác dụng và hoàn tác sạch, hồi sinh giữa sự kiện,
+## bom chuyền / nổ / người cầm chết, không có sự kiện lúc giới thiệu và sau trận, bộ đếm giờ tự bốc thăm + roulette trên HUD.
+func _brawl_event_checks() -> void:
+	# --- Dựng cảnh; chưa bắt đầu trận thì start_event bị bỏ qua ---
+	var br := await _make_brawl(0, 0.3)
+	var a := br.balls[0]
+	var b := br.balls[1]
+	var ev := br.events
+	var starts: Array[String] = []
+	var ends: Array[String] = []
+	ev.event_started.connect(func(id: String) -> void: starts.append(id))
+	ev.event_ended.connect(func(id: String) -> void: ends.append(id))
+	_expect(ev != null and ev.get_parent() == br and BrawlEvents.EVENT_IDS.size() == 6 and ev.active_event == "" and ev.rolling_event == "", "brawl.events exists with six events and nothing active")
+	_expect(ev.interval == 15.0 and ev.first_delay == 10.0 and ev.roulette_seconds == 2.0 and ev.enabled == false, "defaults: first event after 10 s, then every 15 s, roulette 2 s (events switched off by the test helper)")
+	ev.start_event("low_gravity")
+	_expect(ev.active_event == "" and a.gravity_scale == 1.0 and starts.is_empty(), "start_event() is ignored while the match is not running (intro)")
+	await _brawl_ready(br)
+
+	# --- Bốc thăm: không bao giờ trùng sự kiện ngay trước, đủ sáu sự kiện ---
+	var picks: Array[String] = []
+	var seen := {}
+	var never_twice := true
+	for i in 400:
+		var pick := ev.pick_event()
+		if not picks.is_empty() and pick == picks[-1]:
+			never_twice = false
+		picks.append(pick)
+		seen[pick] = true
+	_expect(never_twice and seen.size() == 6, "pick_event(): never the same event twice in a row over 400 picks, and all 6 events come up")
+
+	# --- Số đo gốc (trước mọi sự kiện) ---
+	var base := _ev_props(a)
+	var mat_a := a.physics_material_override
+	var mat_b := b.physics_material_override
+	_expect(base == [1000, 550, 900, false] and _ev_props(b) == base, "baseline: gravity 1, bounce 0.55, friction 0.9, normal keys (%s)" % str(base))
+	var apex_normal := await _ev_apex(br, a)
+	var rebound_normal := await _ev_rebound(br, a)
+	var slide_normal := await _ev_slide(br, a)
+	print("    (baseline: apex %.0f px, rebound %.0f px, slide %.0f px)" % [apex_normal, rebound_normal, slide_normal])
+
+	# --- LOW GRAVITY: rơi chậm, nhảy cao hơn hẳn; hết sự kiện thì trọng lực về 1 ---
+	ev.start_event("low_gravity")
+	await _frames(2)
+	_expect(ev.active_event == "low_gravity" and starts.back() == "low_gravity" and is_equal_approx(a.gravity_scale, ev.low_gravity_scale) and is_equal_approx(b.gravity_scale, ev.low_gravity_scale), "LOW GRAVITY: both balls get gravity x%.2f" % ev.low_gravity_scale)
+	_expect(br.hud.event_state == "active" and br.hud.event_text == "LOW GRAVITY" and br.hud.event_fraction > 0.9, "LOW GRAVITY: the HUD banner shows the name and a full countdown bar")
+	var apex_low := await _ev_apex(br, a)
+	print("    (low gravity: apex %.0f px vs %.0f px normal)" % [apex_low, apex_normal])
+	_expect(apex_low > apex_normal * 1.8, "LOW GRAVITY: the same jump goes much higher (%.0f px vs %.0f px)" % [apex_low, apex_normal])
+	_expect(br.hud.event_fraction < 0.95 and ev.time_left < ev.low_gravity_seconds - 4.0, "LOW GRAVITY: the countdown bar shrinks while it runs (%.2f)" % br.hud.event_fraction)
+	ev.stop_event()
+	await _frames(2)
+	_expect(ev.active_event == "" and ends.back() == "low_gravity" and _ev_props(a) == base and _ev_props(b) == base and br.hud.event_state == "", "LOW GRAVITY: stop_event() restores gravity and hides the banner")
+	var apex_after := await _ev_apex(br, a)
+	_expect(absf(apex_after - apex_normal) < 4.0, "after LOW GRAVITY the jump height is back to normal (%.0f vs %.0f px)" % [apex_after, apex_normal])
+
+	# --- SUPER BOUNCE: nảy cao gần bằng độ cao thả ---
+	ev.start_event("super_bounce")
+	await _frames(2)
+	_expect(ev.active_event == "super_bounce" and is_equal_approx(a.physics_material_override.bounce, ev.super_bounce_bounce) and is_equal_approx(b.physics_material_override.bounce, ev.super_bounce_bounce) and a.physics_material_override != b.physics_material_override and a.physics_material_override != mat_a, "SUPER BOUNCE: each ball gets its own material with bounce %.2f (the shared scene material is untouched: %.2f)" % [ev.super_bounce_bounce, mat_a.bounce])
+	var rebound_super := await _ev_rebound(br, a)
+	print("    (super bounce: rebound %.0f px of a 324 px drop; normal %.0f px)" % [rebound_super, rebound_normal])
+	_expect(rebound_super > rebound_normal * 2.2 and rebound_super > 220.0, "SUPER BOUNCE: a dropped ball rebounds far higher (%.0f px vs %.0f px, drop 324 px)" % [rebound_super, rebound_normal])
+	ev.stop_event()
+	await _frames(2)
+	_expect(_ev_props(a) == base and _ev_props(b) == base and a.physics_material_override == mat_a and b.physics_material_override == mat_b, "SUPER BOUNCE: the original material object is back on both balls")
+	var rebound_after := await _ev_rebound(br, a)
+	_expect(absf(rebound_after - rebound_normal) < 5.0, "after SUPER BOUNCE the rebound is back to normal (%.0f vs %.0f px)" % [rebound_after, rebound_normal])
+
+	# --- ICE FLOOR: gần như không ma sát, trượt xa; có lớp phủ băng nhìn thấy; hết thì bỏ ---
+	ev.start_event("ice_floor")
+	await _frames(2)
+	_expect(ev.active_event == "ice_floor" and is_equal_approx(a.physics_material_override.friction, ev.ice_friction) and is_equal_approx(b.physics_material_override.friction, ev.ice_friction) and _count(br.level, BrawlEvents.IceOverlay) == 1, "ICE FLOOR: friction %.2f on both balls and the icy overlay is on the arena" % ev.ice_friction)
+	var slide_ice := await _ev_slide(br, a)
+	print("    (ice: slid %.0f px vs %.0f px normal)" % [slide_ice, slide_normal])
+	_expect(slide_ice > slide_normal * 3.0 and slide_ice > 100.0, "ICE FLOOR: a pushed ball slides much farther (%.0f px vs %.0f px)" % [slide_ice, slide_normal])
+	ev.stop_event()
+	await _frames(2)
+	_expect(_ev_props(a) == base and _ev_props(b) == base and a.physics_material_override == mat_a and _count(br.level, BrawlEvents.IceOverlay) == 0, "ICE FLOOR: friction and the icy overlay are gone afterwards")
+	var slide_after := await _ev_slide(br, a)
+	_expect(absf(slide_after - slide_normal) < 5.0, "after ICE FLOOR the slide is back to normal (%.0f vs %.0f px)" % [slide_after, slide_normal])
+
+	# --- REVERSED KEYS: giữ trái thì đi phải; tự hết sau thời gian đặt ---
+	ev.reversed_keys_seconds = 0.6
+	ev.start_event("reversed_keys")
+	await _frames(2)
+	_expect(a.reverse_controls and b.reverse_controls, "REVERSED KEYS: both balls have reversed controls")
+	Input.action_press("p1_left")
+	Input.action_press("p2_right")
+	await _frames(12)
+	_expect(a.charge_dir == 1 and b.charge_dir == -1, "REVERSED KEYS: holding left charges RIGHT for P1 and holding right charges LEFT for P2 (%d, %d)" % [a.charge_dir, b.charge_dir])
+	_release_all_keys()
+	await _frames(40)                                # 0.6 giây hết giờ
+	_expect(ev.active_event == "" and ends.back() == "reversed_keys" and not a.reverse_controls and not b.reverse_controls, "REVERSED KEYS: ends by itself after its duration and the keys are normal again")
+	Input.action_press("p1_left")
+	Input.action_press("p2_right")
+	await _frames(12)
+	_expect(a.charge_dir == -1 and b.charge_dir == 1, "after REVERSED KEYS holding left charges left again")
+	_release_all_keys()
+	await _frames(3)
+	ev.reversed_keys_seconds = 8.0
+
+	# --- SWAP!: đổi chỗ và vận tốc, tức thì ---
+	a.teleport(Vector2(300, 300))
+	b.teleport(Vector2(900, 250))
+	await _frames(3)
+	a.linear_velocity = Vector2(120, 0)
+	b.linear_velocity = Vector2(-60, 0)
+	await _frames(1)
+	var pos_a := a.global_position
+	var pos_b := b.global_position
+	var vx_a := a.linear_velocity.x
+	var vx_b := b.linear_velocity.x
+	var started_before := starts.size()
+	ev.start_event("swap")
+	_expect(ev.active_event == "" and starts.size() == started_before + 1 and starts.back() == "swap" and ends.back() == "swap", "SWAP!: instant event (started and ended at once, nothing stays active)")
+	await _frames(4)
+	_expect(a.global_position.distance_to(pos_b) < 40.0 and b.global_position.distance_to(pos_a) < 40.0, "SWAP!: the two players traded places (P1 %s -> %s, P2 %s -> %s)" % [pos_a.round(), a.global_position.round(), pos_b.round(), b.global_position.round()])
+	_expect(absf(a.linear_velocity.x - vx_b) < 25.0 and absf(b.linear_velocity.x - vx_a) < 25.0, "SWAP!: velocities were traded too (P1 vx %.0f, P2 vx %.0f; before %.0f / %.0f)" % [a.linear_velocity.x, b.linear_velocity.x, vx_a, vx_b])
+	_expect(_ev_props(a) == base and _ev_props(b) == base, "SWAP!: nothing else is left changed")
+	br.hud.hide_event()
+
+	# --- Hồi sinh giữa sự kiện: hiệu ứng được áp lại, hết sự kiện thì sạch hoàn toàn ---
+	for id in ["low_gravity", "super_bounce", "ice_floor", "reversed_keys"]:
+		ev.start_event(id)
+		await _frames(2)
+		var during := _ev_props(b)
+		_expect(ev.active_event == id and during != base and _ev_props(a) == during, "%s: both players have the effect (%s)" % [id, str(during)])
+		br.kill(a, "pit")                           # P1 chết giữa sự kiện, P2 ghi điểm
+		await _frames(50)                           # hồi sinh sau 0.3 giây
+		_expect(not a.dead and ev.active_event == id and _ev_props(a) == during, "%s: the player who respawned during the event has the effect again" % id)
+		ev.stop_event()
+		await _frames(2)
+		_expect(_ev_props(a) == base and _ev_props(b) == base and a.physics_material_override == mat_a and b.physics_material_override == mat_b and _count(br.level, BrawlEvents.IceOverlay) == 0, "%s: after the event everything is exactly back to normal (gravity, material, keys, overlay)" % id)
+	br.queue_free()
+	await _frames(2)
+
+	# --- HOT POTATO: bom nổi trên đầu, chuyền khi chạm (có thời gian chờ), nổ giết người cầm ---
+	br = await _make_brawl(0)
+	a = br.balls[0]
+	b = br.balls[1]
+	ev = br.events
+	var kills := []
+	br.point_scored.connect(func(scorer: Ball, victim: Ball, cause: String) -> void: kills.append([scorer, victim, cause]))
+	await _brawl_ready(br)
+	ev.hot_potato_seconds = 6.0
+	ev.potato_pass_cooldown = 0.5
+	ev.start_event("hot_potato")
+	var first := ev.bomb_carrier
+	var second := br.opponent_of(first)
+	_expect(ev.active_event == "hot_potato" and first != null and _bomb_markers(first) == 1 and _bomb_markers(second) == 0 and br.hud.event_text == "HOT POTATO", "HOT POTATO: exactly one player carries a bomb over their head")
+	await _frames(30)
+	_expect(ev.bomb_carrier == first and absf(ev._bomb.fuse_left - ev.time_left) < 0.1 and ev.time_left < 5.6, "HOT POTATO: the bomb stays while the players are apart and the fuse counts down (%.1f s)" % ev.time_left)
+	var toward := -31.0 if first.global_position.x > 640.0 else 31.0
+	second.teleport(first.global_position + Vector2(toward, 0))
+	await _frames(6)
+	_expect(ev.bomb_carrier == second and _bomb_markers(second) == 1 and _bomb_markers(first) == 0, "HOT POTATO: touching the other player passes the bomb on")
+	first.teleport(second.global_position + Vector2(-toward, 0))   # lập tức chạm lại: còn trong thời gian chờ
+	await _frames(6)
+	_expect(ev.bomb_carrier == second and _bomb_markers(second) == 1, "HOT POTATO: the pass cooldown stops the bomb pinging back at once")
+	await _frames(40)
+	var holder := ev.bomb_carrier
+	var other_one := br.opponent_of(holder)
+	other_one.teleport(holder.global_position + Vector2(-31.0 if holder.global_position.x > 640.0 else 31.0, 0))
+	await _frames(6)
+	_expect(ev.bomb_carrier == other_one and _bomb_markers(other_one) == 1 and _bomb_markers(holder) == 0 and kills.is_empty(), "HOT POTATO: after the cooldown it can be passed again (no points so far)")
+	var victim := ev.bomb_carrier
+	var scorer := br.opponent_of(victim)
+	var scorer_index := br.balls.find(scorer)
+	ev.time_left = 0.1                              # ngòi sắp hết
+	await _frames(12)
+	_expect(br.scores[scorer_index] == 1 and br.scores[1 - scorer_index] == 0 and kills.size() == 1 and kills[0][0] == scorer and kills[0][1] == victim and kills[0][2] == "bomb", "HOT POTATO: when the fuse ends the carrier is killed with cause 'bomb' and the other player scores (%s)" % str(br.scores))
+	_expect(victim.dead and ev.active_event == "" and ev.bomb_carrier == null and _bomb_markers(victim) == 0 and _bomb_markers(scorer) == 0 and ends.size() > 0, "HOT POTATO: the bomb is gone and the event is over after the explosion")
+	_expect(br.hud.message_label.text == "P%d WENT BOOM!" % victim.player_id, "HOT POTATO: the point message reads '%s'" % br.hud.message_label.text)
+	await _frames(60)
+	_expect(not victim.dead and br.scores[scorer_index] == 1 and kills.size() == 1, "HOT POTATO: the victim respawns and nothing else scores")
+	br.queue_free()
+	await _frames(2)
+
+	# --- Người cầm bom chết vì lý do khác: sự kiện bom kết thúc, không thêm điểm ---
+	for cause in ["pit", "stomp", "spikes"]:
+		br = await _make_brawl(0)
+		a = br.balls[0]
+		b = br.balls[1]
+		ev = br.events
+		await _brawl_ready(br)
+		ev.hot_potato_seconds = 2.0
+		ev.start_event("hot_potato")
+		var carrier := ev.bomb_carrier
+		var rival := br.opponent_of(carrier)
+		br.kill(carrier, cause)
+		await _frames(2)
+		_expect(ev.active_event == "" and ev.bomb_carrier == null and _bomb_markers(carrier) == 0 and _bomb_markers(rival) == 0 and br.hud.event_state == "", "HOT POTATO: the carrier dying by '%s' ends the bomb event" % cause)
+		await _frames(170)                          # quá thời gian ngòi cũ (2 giây)
+		_expect(br.scores[br.balls.find(rival)] == 1 and br.scores[br.balls.find(carrier)] == 0 and not carrier.dead, "HOT POTATO: no extra bomb point after the carrier died by '%s' (%s)" % [cause, str(br.scores)])
+		br.queue_free()
+		await _frames(2)
+
+	# --- Hết trận giữa sự kiện: mọi hiệu ứng được hoàn tác, sau đó không còn sự kiện ---
+	br = await _make_brawl(0)
+	a = br.balls[0]
+	b = br.balls[1]
+	ev = br.events
+	mat_a = a.physics_material_override
+	await _brawl_ready(br)
+	ev.start_event("ice_floor")
+	await _frames(2)
+	_expect(_count(br.level, BrawlEvents.IceOverlay) == 1 and a.physics_material_override != mat_a, "(match end) the ice event is running")
+	br.scores[1] = Brawl.WIN_SCORE - 1
+	br.kill(a, "pit")                               # P2 đạt điểm thắng: hết trận
+	await _frames(3)
+	_expect(not br.match_running and ev.active_event == "" and _ev_props(a) == base and _ev_props(b) == base and a.physics_material_override == mat_a and _count(br.level, BrawlEvents.IceOverlay) == 0 and br.hud.event_state == "", "the match ending removes the running event completely")
+	ev.start_event("low_gravity")
+	await _frames(2)
+	_expect(ev.active_event == "" and a.gravity_scale == 1.0, "no event can start after the match is over")
+	br.queue_free()
+	await _frames(2)
+
+	# --- Bộ đếm giờ tự bốc thăm: không có gì lúc giới thiệu; roulette; sự kiện; không trùng; tắt được ---
+	br = await _make_brawl(0, 0.8, true)
+	a = br.balls[0]
+	b = br.balls[1]
+	ev = br.events
+	ev.first_delay = 0.5
+	ev.interval = 1.5
+	ev.roulette_seconds = 0.6
+	ev.low_gravity_seconds = 0.3
+	ev.super_bounce_seconds = 0.3
+	ev.ice_floor_seconds = 0.3
+	ev.reversed_keys_seconds = 0.3
+	ev.hot_potato_seconds = 0.3
+	starts = []
+	ends = []
+	ev.event_started.connect(func(id: String) -> void: starts.append(id))
+	ev.event_ended.connect(func(id: String) -> void: ends.append(id))
+	await _frames(35)                                # vẫn đang READY...
+	_expect(not br.match_running and ev.active_event == "" and ev.rolling_event == "" and starts.is_empty() and br.hud.event_state == "", "no event and no roulette during the READY... intro")
+	while not br.match_running:
+		await _frames(1)
+	await _frames(24)                                # 0.4 giây sau khi bắt đầu: chưa tới giờ (first_delay 0.5)
+	_expect(starts.is_empty() and ev.rolling_event == "", "no event before first_delay has passed")
+	await _frames(18)                                # 0.7 giây: roulette đang quay
+	var rolled := ev.rolling_event
+	_expect(rolled != "" and br.hud.event_state == "roulette" and ev.active_event == "" and starts.is_empty(), "the roulette starts at first_delay and the event waits for it to finish (rolling %s)" % rolled)
+	await _frames(18)                                # 1.0 giây: roulette đã dừng ở tên được chọn nhưng chưa vào sự kiện
+	_expect(ev.rolling_event == rolled and br.hud.event_text == ev.event_name(rolled), "the roulette lands on the chosen event name ('%s')" % br.hud.event_text)
+	await _frames(18)                                # 1.3 giây: sự kiện đầu tiên đã bắt đầu
+	_expect(starts.size() == 1 and starts[0] == rolled and ev.rolling_event == "", "the automatic timer fired exactly the event the roulette landed on (%s)" % str(starts))
+	await _frames(60)                                # 2.3 giây: sự kiện đầu đã hết, đã tới giờ sự kiện thứ hai (0.5 + 1.5 = 2.0 giây)
+	_expect(ends.size() >= 1 and ev.active_event == "" and (ev.rolling_event != "" or starts.size() == 2), "the second roulette starts one interval (1.5 s) after the first")
+	await _frames(40)                                # 3.0 giây
+	_expect(starts.size() == 2 and starts[0] != starts[1], "never the same event twice in a row from the timer (%s)" % str(starts))
+	ev.enabled = false
+	await _frames(80)                                # 4.3 giây: lẽ ra sự kiện thứ ba bắt đầu vào 3.5 giây
+	_expect(starts.size() == 2 and ev.rolling_event == "", "enabled = false stops new events")
+	ev.stop_event()
+	await _frames(3)
+	_expect(_ev_props(a) == base and _ev_props(b) == base and _count(br.level, BrawlEvents.IceOverlay) == 0 and _bomb_markers(a) == 0 and _bomb_markers(b) == 0, "after the automatic events everything is back to normal")
 	br.queue_free()
 	await _frames(2)
 

@@ -12,8 +12,9 @@ extends Node2D                          # cảnh chế độ đấu 2 người (
 ##   opponent_of(ball), spawn_of(ball), hud.flash(text, seconds)
 ##   match_running = false khi đang giới thiệu (READY...), khi trận đã kết thúc; chỉ khi true mới có điểm
 ##   tín hiệu: point_scored(scorer, victim, cause), match_started, match_over(winner), player_respawned(ball)
+##   events (BrawlEvents) = sự kiện ngẫu nhiên: events.start_event(id), events.stop_event(), events.active_event, events.enabled...
 
-signal point_scored(scorer: Ball, victim: Ball, cause: String)   # có người ghi điểm; cause: "stomp", "pit", "spikes" (hoặc chữ khác do sự kiện đặt)
+signal point_scored(scorer: Ball, victim: Ball, cause: String)   # có người ghi điểm; cause: "stomp", "pit", "spikes", "bomb" (hoặc chữ khác do sự kiện / vật phẩm đặt)
 signal match_started                    # hết phần giới thiệu, trận bắt đầu (bóng điều khiển được)
 signal match_over(winner: Ball)         # có người đạt WIN_SCORE
 signal player_respawned(ball: Ball)     # một người chơi vừa hồi sinh (để sự kiện / vật phẩm đặt lại trạng thái riêng)
@@ -50,6 +51,7 @@ var scores: Array[int] = [0, 0]         # điểm của người chơi 1 và 2
 var spawn_points: Array[Vector2] = []   # chỗ xuất phát / hồi sinh của người chơi 1 và 2
 var match_running := false              # true = đang đấu (có thể ghi điểm); false = đang giới thiệu hoặc đã hết trận
 var winner: Ball = null                 # người thắng (null khi chưa hết trận)
+var events: BrawlEvents                 # sự kiện ngẫu nhiên (scripts/brawl_events.gd): events.start_event(id), events.active_event...
 var vs_bot := false                     # chế độ đánh với máy (chỉ lưu cờ; bot sẽ làm ở phần sau)
 var stall_active := false               # đang trong giai đoạn gai chống câu giờ
 var stall_spikes: Array[Spikes] = []    # các gai chống câu giờ đang có trên sàn
@@ -104,6 +106,9 @@ func _ready() -> void:
 		ball.stomped.connect(_on_stomped.bind(ball))  # dẫm lên đầu bóng khác thì gọi _on_stomped
 		balls.append(ball)                        # lưu vào danh sách công khai
 
+	events = BrawlEvents.new()                    # sự kiện ngẫu nhiên (LOW GRAVITY, HOT POTATO...), tự nghe match_started
+	events.name = "Events"                        # tên node cho dễ tìm
+	add_child(events)                             # thêm vào cảnh (sau khi bóng và HUD đã có)
 	hud.setup(WIN_SCORE)                          # cài giao diện
 	hud.rematch_pressed.connect(func() -> void: Game.start_brawl(Game.brawl_vs_bot))   # bấm Rematch: vào trận mới
 	hud.menu_pressed.connect(Game.go_to_menu)     # bấm Menu: về menu
@@ -224,6 +229,8 @@ func _point_text(scorer: Ball, victim: Ball, cause: String) -> String:
 			return "P%d FELL IN!" % victim.player_id   # rơi xuống vực
 		"spikes":
 			return "P%d GOT SPIKED!" % victim.player_id   # dính gai
+		"bomb":
+			return "P%d WENT BOOM!" % victim.player_id   # bom HOT POTATO nổ trên đầu
 	return "P%d SCORES!" % scorer.player_id       # nguyên nhân khác (sự kiện, vật phẩm)
 
 

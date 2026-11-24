@@ -12,6 +12,7 @@ func _ready() -> void:
 	Game.save_enabled = false                       # không ghi đè file lưu thật
 	for i in BrawlData.ARENAS.size():
 		var brawl := await _start(i)
+		brawl.events.enabled = false                 # các ảnh dưới đây không có sự kiện ngẫu nhiên chen vào
 		await _frames(20)
 		await _shot("arena%d_start" % i)             # đang READY...
 		await _wait_match(brawl)
@@ -40,7 +41,43 @@ func _ready() -> void:
 		await _shot("arena%d_win" % i)
 		brawl.queue_free()
 		await _frames(3)
+		await _event_shots(i)                        # banner roulette, sự kiện đang chạy (sàn băng), bom HOT POTATO
 	get_tree().quit()
+
+
+## Ảnh sự kiện ngẫu nhiên: roulette đang quay, ICE FLOOR đang chạy (thanh đếm ngược + màu băng), bom HOT POTATO (lúc đầu và lúc sắp nổ).
+func _event_shots(index: int) -> void:
+	var brawl := await _start(index)
+	var ev := brawl.events
+	ev.enabled = true                                # để bộ đếm giờ tự bốc thăm: roulette bắt đầu 0,2 giây sau khi trận bắt đầu
+	ev.first_delay = 0.2
+	ev.roulette_seconds = 2.4
+	ev.ice_floor_seconds = 4.0
+	await _wait_match(brawl)
+	await _frames(60)                                # 0,8 giây sau khi roulette bắt đầu: đang quay
+	await _shot("arena%d_event_roulette" % index)
+	ev.enabled = false
+	await _frames(20)
+	await _shot("arena%d_event_roulette2" % index)   # chụp thêm một khung nữa, tên khác đang hiện
+	ev.start_event("ice_floor")                      # bỏ qua roulette, vào thẳng sàn băng
+	await _frames(70)
+	await _shot("arena%d_event_ice" % index)
+	ev.hot_potato_seconds = 5.0
+	ev.start_event("hot_potato")                     # bom bốc ngẫu nhiên cho một người
+	await _frames(45)
+	await _shot("arena%d_event_bomb" % index)
+	ev.time_left = 2.0                               # ngòi sắp hết: nhấp nháy nhanh, số vàng
+	await _frames(25)
+	await _shot("arena%d_event_bomb_late" % index)
+	await _frames(4)
+	await _shot("arena%d_event_bomb_late2" % index)  # vài khung sau: bắt được nhịp "đỏ" của nhấp nháy
+	await _frames(4)
+	await _shot("arena%d_event_bomb_late3" % index)
+	ev.start_event("reversed_keys")                  # banner sự kiện khác (màu cam)
+	await _frames(40)
+	await _shot("arena%d_event_reversed" % index)
+	brawl.queue_free()
+	await _frames(3)
 
 
 ## Dựng cảnh đấu với đấu trường số `index`, giới thiệu dài một chút để kịp chụp READY...
