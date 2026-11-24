@@ -23,6 +23,12 @@ func _ready() -> void:
 		get_tree().quit(1 if failures > 0 else 0)
 		return
 
+	if OS.get_cmdline_user_args().has("--only-chained"):   # lúc đang làm chế độ Chained: chạy riêng phần này cho nhanh (godot ... -- --only-chained)
+		await _chained_checks()
+		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
+		get_tree().quit(1 if failures > 0 else 0)
+		return
+
 	if OS.get_cmdline_user_args().has("--only-bot"):     # lúc đang làm bot: chạy riêng phần này cho nhanh (godot ... -- --only-bot)
 		await _brawl_bot_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
@@ -44,6 +50,10 @@ func _ready() -> void:
 	_expect(tidy, "the Brawl row fits the 1280x720 screen and does not overlap the level grid, the help line or Quit (%s)" % brawl_rect)
 	_expect(brawl_rect.encloses(two_rect) and brawl_rect.encloses(bot_rect) and not two_rect.intersects(bot_rect) and two_rect.position.x < bot_rect.position.x and absf(two_rect.size.x - bot_rect.size.x) < 2.0, "BRAWL 2P (left) and BRAWL VS BOT (right) sit side by side, equal width, inside the row (%s | %s)" % [two_rect, bot_rect])
 	_expect(menu.brawl_button.pressed.get_connections().size() >= 1 and menu.bot_button.pressed.get_connections().size() >= 1 and Game.has_method("start_brawl") and not Game.brawl_vs_bot, "both Brawl buttons are wired to Game.start_brawl (vs_bot defaults to false)")
+	var chained_rect: Rect2 = menu.chained_button.get_global_rect()
+	_expect(menu.chained_button != null and menu.chained_button.text == "CHAINED 2P" and menu.chained_button.get_parent() == menu.brawl_row, "menu has the CHAINED 2P button in the same row as the Brawl buttons")
+	_expect(brawl_rect.encloses(chained_rect) and not chained_rect.intersects(bot_rect) and not chained_rect.intersects(two_rect) and chained_rect.position.x > bot_rect.position.x and absf(chained_rect.size.x - bot_rect.size.x) < 2.0 and menu_rect.encloses(chained_rect), "CHAINED 2P sits to the right of BRAWL VS BOT, equal width, inside the row and the screen (%s)" % chained_rect)
+	_expect(menu.chained_button.pressed.get_connections().size() >= 1 and Game.has_method("start_chained"), "CHAINED 2P is wired to Game.start_chained")
 	await _shot("00_menu")
 	menu.queue_free()
 
@@ -508,6 +518,7 @@ func _ready() -> void:
 	await _brawl_event_checks()                    # sự kiện ngẫu nhiên của chế độ đấu (roulette, 6 sự kiện)
 	await _brawl_item_checks()                     # vật phẩm troll, vương miện người dẫn điểm, câu châm chọc
 	await _brawl_bot_checks()                      # máy (bot) chơi thay người chơi 2
+	await _chained_checks()                        # chế độ Chained: hai người bị trói bằng dây, sao xâu trên dây
 
 	print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 	get_tree().quit(1 if failures > 0 else 0)
@@ -2436,3 +2447,739 @@ func _shot(shot_name: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	if img:
 		img.save_png(shots_dir.path_join(shot_name + ".png"))
+
+
+# ====================================================================================================================
+# Chế độ Chained: dây đàn hồi, neo, súng cao su, hạt (sao xâu trên dây), chết chung, về đích, màn 1 qua được.
+# ====================================================================================================================
+
+## Vị trí tâm bóng đứng trên mặt ô (cột, hàng) của bản đồ (cùng công thức Chained._find_spawn; cột 63.5 = giữa ô cột 63).
+func _cpos(col: float, row: float) -> Vector2:
+	return Vector2(col * 32.0, (row + 1.0) * 32.0 - 16.0)
+
+
+## Bản đồ phẳng `cols` cột x 15 hàng: phần trên trống, 3 hàng cuối là đất (mặt đất ở y = 384, tâm bóng đứng ở y = 369).
+func _chained_flat_map(cols := 80, pillar_from := -1, pillar_to := -1) -> String:
+	var rows: PackedStringArray = []
+	for r in 12:                                       # 12 hàng trên: trống, có tường hai bên
+		var row := "#" + ".".repeat(cols - 2) + "#"
+		if pillar_from > 0 and r >= 9:                 # cột đất cao 3 ô (hàng 9..11) từ cột pillar_from tới pillar_to
+			row = row.substr(0, pillar_from) + "#".repeat(pillar_to - pillar_from + 1) + row.substr(pillar_to + 1)
+		rows.append(row)
+	for r in 3:                                        # 3 hàng đất
+		rows.append("#".repeat(cols))
+	return "\n".join(rows)
+
+
+## Bản đồ có hố không đáy: 24 hàng, mặt đất ở hàng 12 (y = 384), hố ở các cột pit_from..pit_to (bờ trái, bờ phải là đất tới tận đáy).
+func _chained_pit_map(cols: int, pit_from: int, pit_to: int) -> String:
+	var rows: PackedStringArray = []
+	for r in 12:
+		rows.append("#" + ".".repeat(cols - 2) + "#")
+	for r in 12:
+		rows.append("#".repeat(pit_from) + ".".repeat(pit_to - pit_from + 1) + "#".repeat(cols - 1 - pit_to))
+	return "\n".join(rows)
+
+
+## Hai bóng (người chơi 1 ở x1, người chơi 2 ở x2, cùng tầm y) nối bằng một Rope trong bản đồ `map`; chờ cho đứng yên. Trả về [màn, bóng 1, bóng 2, dây].
+func _rope_rig(map: String, x1: float, x2: float, y: float, with_rope := true) -> Array:
+	var lv := _make_level(map)
+	var a := _make_ball(lv, Vector2(x1, y))
+	var b := _make_ball(lv, Vector2(x2, y))
+	a.set_player(1)
+	b.set_player(2)
+	a.set_collide_with_balls(true)
+	b.set_collide_with_balls(true)
+	var rope: Rope = null
+	if with_rope:
+		rope = Rope.new()
+		lv.add_child(rope)
+		rope.setup(a, b)
+	await _frames(50)
+	return [lv, a, b, rope]
+
+
+## Giữ hướng `dir` ("right" / "left") của người chơi `prefix` ("p1_" / "p2_") `charge` khung rồi bấm nhảy một khung: nhảy đầy lực nếu charge >= 42.
+func _chained_jump(prefix: String, dir: String, charge := 50) -> void:
+	Input.action_press(prefix + dir)
+	await _frames(charge)
+	Input.action_press(prefix + "jump")
+	await _frames(1)
+	Input.action_release(prefix + "jump")
+	Input.action_release(prefix + dir)
+
+
+## Đợi `ball` rời đất rồi chạm đất lần đầu: trả về x lúc chạm đất, hoặc -1 nếu quá `max_frames` khung (rơi vực...).
+func _await_landing(ball: Ball, max_frames := 300) -> float:
+	var airborne := false
+	for f in max_frames:
+		await _frames(1)
+		if not ball.on_ground:
+			airborne = true
+		if airborne and ball.on_ground and f > 8:
+			return ball.global_position.x
+	return -1.0
+
+
+## Đặt các hạt của `rope` đúng ở các vị trí `values` (không tách hạt chồng nhau, để bài test kiểm tra số liệu chính xác).
+func _set_beads(rope: Rope, values: Array) -> void:
+	rope.beads.clear()
+	for v in values:
+		var bd := Rope.Bead.new()
+		bd.t = v
+		rope.beads.append(bd)
+
+
+## Dịch cả hai người chơi cùng lúc tới `pos_a` / `pos_b` (dịch một người đi xa thì dây giật cả hai rất mạnh) rồi chờ vài khung.
+func _chained_move(ch: Chained, pos_a: Vector2, pos_b: Vector2, frames := 3) -> void:
+	ch.balls[0].teleport(pos_a)
+	ch.balls[1].teleport(pos_b)
+	await _frames(frames)
+
+
+## Dựng cảnh Chained ở màn `index` (rút ngắn mọi thời gian chờ, không đổi cảnh thật khi hết mạng). `ready` = chờ hết giới thiệu và cho hai bóng ổn định.
+func _make_chained(index := 0, ready := true) -> Chained:
+	Game.chained_index = index
+	var ch: Chained = load("res://scenes/chained.tscn").instantiate()
+	ch.intro_seconds = 0.2
+	ch.respawn_delay = 0.3
+	ch.restart_delay = 0.3
+	ch.finish_panel_delay = 0.2
+	ch.scene_changes_enabled = false
+	add_child(ch)
+	await _frames(2)
+	if ready:
+		for i in 200:
+			if ch.match_running:
+				break
+			await _frames(1)
+		await _frames(45)
+	return ch
+
+
+## Xoá cảnh Chained sau khi các hẹn giờ của nó chạy hết (xoá ngay thì hẹn giờ bị bỏ dở và rò rỉ tới lúc thoát chương trình).
+func _free_chained(ch: Chained) -> void:
+	_release_all_keys()
+	await _frames(150)
+	ch.queue_free()
+	await _frames(2)
+
+
+## Mọi kiểm tra của chế độ Chained.
+func _chained_checks() -> void:
+	for c in get_children():                           # dọn mọi cảnh còn sót (cùng một thế giới vật lý)
+		c.queue_free()
+	await _frames(3)
+	_release_all_keys()
+	await _chained_rope_checks()
+	await _chained_anchor_checks()
+	await _chained_slingshot_checks()
+	await _chained_bead_checks()
+	await _chained_mode_checks()
+	await _chained_death_checks()
+	await _chained_finish_checks()
+	await _chained_level_checks()
+
+
+## Dây: không lực dưới độ dài chùng, kéo khi căng, không vượt quá độ dài tối đa, đứt thì tắt, chỉnh được lúc đang chạy.
+func _chained_rope_checks() -> void:
+	var map := _chained_flat_map(80)
+	var rig := await _rope_rig(map, 600.0, 700.0, 369.0)
+	var lv: Level = rig[0]
+	var a: Ball = rig[1]
+	var b: Ball = rig[2]
+	var rope: Rope = rig[3]
+	_expect(rope.rest_length == 160.0 and rope.max_length == 320.0 and rope.stiffness > 0.0 and rope.damping > 0.0 and not rope.cut, "rope defaults: rest 160 (5 tiles), max 320 (10 tiles), public stiffness / damping, not cut (stiffness %.0f, damping %.1f)" % [rope.stiffness, rope.damping])
+	var ax := a.global_position.x
+	var bx := b.global_position.x
+	await _frames(60)
+	_expect(rope.tension() == 0.0 and absf(a.global_position.x - ax) < 1.0 and absf(b.global_position.x - bx) < 1.0, "rope: no force while the balls are closer than rest_length (%.0f px apart)" % rope.current_length())
+
+	a.teleport(Vector2(500.0, 369.0))                  # kéo giãn: cách 290 pixel
+	b.teleport(Vector2(790.0, 369.0))
+	await _frames(3)
+	var d0 := rope.current_length()
+	await _frames(20)
+	_expect(rope.tension() > 0.0 and rope.current_length() < d0 - 20.0 and a.global_position.x > 505.0 and b.global_position.x < 785.0, "rope: pulls both balls together when stretched (%.0f -> %.0f px, tension %.0f)" % [d0, rope.current_length(), rope.tension()])
+	_expect(a.linear_velocity.x > 0.0 and b.linear_velocity.x < 0.0, "rope: the pull is applied as velocity through knockback (a %.0f, b %.0f px/s)" % [a.linear_velocity.x, b.linear_velocity.x])
+
+	rope.cut = true                                    # đứt: không lực
+	a.teleport(Vector2(500.0, 369.0))
+	b.teleport(Vector2(790.0, 369.0))
+	await _frames(3)
+	await _frames(30)
+	_expect(rope.tension() == 0.0 and absf(rope.current_length() - 290.0) < 3.0, "rope: cut applies no force (%.0f px apart, tension %.0f)" % [rope.current_length(), rope.tension()])
+	rope.cut = false                                   # nối lại
+	await _frames(5)
+	_expect(rope.tension() > 0.0, "rope: not cut any more pulls again (tension %.0f)" % rope.tension())
+
+	rope.rest_length = 400.0                           # chỉnh lúc đang chạy: dây dài hơn thì hết căng
+	rope.max_length = 600.0
+	a.teleport(Vector2(500.0, 369.0))
+	b.teleport(Vector2(790.0, 369.0))
+	await _frames(20)
+	_expect(rope.tension() == 0.0 and absf(rope.current_length() - 290.0) < 3.0, "rope: rest_length / max_length can be changed at run time (a longer rope is slack at 290 px)")
+	lv.queue_free()
+	await _frames(3)
+
+	# --- Đẩy mạnh một bóng ra xa: dây giữ không cho vượt quá max_length nhiều ---
+	rig = await _rope_rig(map, 600.0, 660.0, 369.0)
+	lv = rig[0]
+	a = rig[1]
+	b = rig[2]
+	rope = rig[3]
+	var longest := 0.0
+	for f in 300:
+		if f < 30:
+			b.knockback(Vector2(150.0, 0.0))           # đẩy b ra xa liên tục nửa giây
+		await _frames(1)
+		longest = maxf(longest, rope.current_length())
+	_expect(longest < rope.max_length + 64.0, "rope: a ball pushed away hard never gets more than 2 tiles past max_length (longest %.0f px, max %.0f)" % [longest, rope.max_length])
+	_expect(longest > rope.rest_length, "rope: ... and the push did stretch it (longest %.0f px)" % longest)
+	lv.queue_free()
+	await _frames(3)
+
+
+## Neo: giữ phím use lúc đứng đất. Không trượt, nặng hơn, ma sát cao, giữ được bạn lơ lửng trên hố; thả ra là trả lại đúng như cũ.
+func _chained_anchor_checks() -> void:
+	var map := _chained_pit_map(70, 25, 44)            # hố từ cột 25 tới 44, sâu 12 ô
+	var rig := await _rope_rig(map, 23.5 * 32.0, 21.0 * 32.0, 369.0)
+	var lv: Level = rig[0]
+	var a: Ball = rig[1]
+	var b: Ball = rig[2]
+	var rope: Rope = rig[3]
+	var mass0 := a.mass
+	var mat0 := a.physics_material_override
+	var friction0: float = mat0.friction
+	_expect(not rope.is_anchored(a) and not rope.is_anchored(b), "anchor: nobody is anchored by default")
+	Input.action_press("p1_use")
+	await _frames(6)
+	_expect(rope.is_anchored(a) and not rope.is_anchored(b), "anchor: holding the use key on the ground anchors only that player")
+	_expect(a.mass > mass0 * 2.0 and a.physics_material_override != mat0 and a.physics_material_override.friction >= 2.0, "anchor: the anchored ball is heavier and has a much higher friction (mass %.1f -> %.1f, friction %.1f -> %.1f)" % [mass0, a.mass, friction0, a.physics_material_override.friction])
+	_expect(mat0.friction == friction0 and is_equal_approx(mat0.bounce, 0.55), "anchor: the shared scene material is not modified (duplicated for the anchor)")
+	var x0 := a.global_position.x
+
+	b.teleport(Vector2(29.5 * 32.0, 250.0))            # người chơi 2 thả vào hố
+	var lowest := 0.0
+	var hung := 0
+	for f in 300:                                      # 5 giây
+		await _frames(1)
+		lowest = maxf(lowest, b.global_position.y)
+		if f > 120 and b.global_position.y > 420.0 and rope.current_length() < rope.max_length + 48.0:
+			hung += 1
+	var pit_bottom := lv.size.y
+	_expect(absf(a.global_position.x - x0) < 3.0 and a.on_ground, "anchor: the anchored player holds still while the partner hangs over the pit (moved %.1f px)" % absf(a.global_position.x - x0))
+	_expect(lowest < pit_bottom - 16.0 and hung >= 170, "anchor: the partner stays held above the pit bottom for 5 seconds (lowest y %.0f, pit bottom %.0f, hanging frames %d/180)" % [lowest, pit_bottom, hung])
+	_expect(b.global_position.y > 420.0 and rope.current_length() < rope.max_length + 48.0 and rope.tension() > 1000.0, "anchor: the dangling partner hangs at the end of the stretched rope (y %.0f, %.0f px from the anchor, tension %.0f)" % [b.global_position.y, rope.current_length(), rope.tension()])
+	Input.action_release("p1_use")
+	await _frames(4)
+	_expect(not rope.is_anchored(a) and a.mass == mass0 and a.physics_material_override == mat0 and a.physics_material_override.friction == friction0, "anchor: letting go restores the mass and the very same friction material (mass %.1f, same material %s)" % [a.mass, str(a.physics_material_override == mat0)])
+	lv.queue_free()
+	await _frames(3)
+
+	# --- Điểm cố định: dây căng ngang kéo người không neo đi, còn người đang neo thì đứng yên (bạn kia cũng neo để dây giữ căng) ---
+	var drag := {}
+	for anchored in [false, true]:
+		rig = await _rope_rig(_chained_flat_map(80), 1000.0, 1100.0, 369.0)
+		lv = rig[0]
+		a = rig[1]
+		b = rig[2]
+		rope = rig[3]
+		Input.action_press("p2_use")                   # người chơi 2 neo: dây căng 290 pixel mà bạn kia bị kéo, còn người neo thì không
+		if anchored:
+			Input.action_press("p1_use")
+		await _frames(5)
+		b.teleport(Vector2(1290.0, 369.0))             # kéo giãn dây ra 290 pixel
+		await _frames(8)
+		x0 = a.global_position.x
+		await _frames(60)
+		drag[anchored] = a.global_position.x - x0
+		_release_all_keys()
+		lv.queue_free()
+		await _frames(3)
+	_expect(drag[true] < 3.0 and drag[false] > 30.0, "anchor: a stretched rope drags a normal ball along (%.0f px) but not an anchored one (%.1f px)" % [drag[false], drag[true]])
+
+	# --- Không trượt: bị hất ngang thì anchored dừng nhanh hơn không anchored ---
+	var slide := {}
+	for anchored in [false, true]:
+		rig = await _rope_rig(_chained_flat_map(80), 1000.0, 900.0, 369.0)
+		lv = rig[0]
+		a = rig[1]
+		if anchored:
+			Input.action_press("p1_use")
+			await _frames(5)
+		x0 = a.global_position.x
+		a.knockback(Vector2(500.0, 0.0))
+		await _frames(60)
+		slide[anchored] = a.global_position.x - x0
+		_release_all_keys()
+		lv.queue_free()
+		await _frames(3)
+	_expect(slide[true] < 45.0 and slide[false] > slide[true] + 25.0, "anchor: a shoved anchored ball does not slide (%.0f px) while a normal one does (%.0f px)" % [slide[true], slide[false]])
+
+	# --- Neo cần đang đứng đất; nhảy thì thả neo; đáp xuống lại neo, không bị dây kéo đi ---
+	rig = await _rope_rig(_chained_flat_map(80), 1000.0, 1100.0, 369.0)
+	lv = rig[0]
+	a = rig[1]
+	b = rig[2]
+	rope = rig[3]
+	a.teleport(Vector2(1000.0, 150.0))
+	await _frames(4)
+	Input.action_press("p1_use")
+	await _frames(4)
+	_expect(not rope.is_anchored(a) and not a.on_ground, "anchor: needs the ground, an airborne player holding use is not anchored")
+	await _frames(150)
+	_expect(rope.is_anchored(a) and absf(a.linear_velocity.x) < 5.0 and a.on_ground, "anchor: ... and anchors as soon as the player lands")
+	Input.action_press("p1_right")
+	await _frames(50)
+	Input.action_press("p1_jump")
+	await _frames(1)
+	Input.action_release("p1_jump")
+	Input.action_release("p1_right")
+	await _frames(5)
+	_expect(not rope.is_anchored(a) and a.linear_velocity.y < -100.0 and a.mass == mass0, "anchor: jumping releases the anchor (still holding use; mass back to %.1f)" % a.mass)
+	var landed := await _await_landing(a)
+	await _frames(90)
+	_expect(landed > 1100.0 and rope.is_anchored(a) and absf(a.linear_velocity.x) < 5.0, "anchor: landing with the key still held anchors again and stays put (landed x %.0f, speed %.1f)" % [landed, a.linear_velocity.x])
+	_release_all_keys()
+	lv.queue_free()
+	await _frames(3)
+
+
+## Súng cao su: một người neo, người kia lùi ra cho dây căng rồi nhảy về phía người neo thì bị hất qua đầu, xa hơn hẳn một cú nhảy thường lúc đang bị trói.
+func _chained_slingshot_checks() -> void:
+	var map := _chained_flat_map(140)
+	# nhảy đầy lực không bị trói (để so): bóng kia ở rất xa
+	var rig := await _rope_rig(map, 1000.0, 300.0, 369.0, false)
+	var lv: Level = rig[0]
+	var a: Ball = rig[1]
+	var x_free := a.global_position.x
+	await _chained_jump("p1_", "right")
+	var land_free := await _await_landing(a)
+	var free_px := land_free - x_free
+	lv.queue_free()
+	await _frames(3)
+	# nhảy đầy lực lúc đang bị trói, bạn đứng sau lưng (không neo): bị dây giật lại và kéo bạn theo
+	rig = await _rope_rig(map, 1000.0, 936.0, 369.0)
+	lv = rig[0]
+	a = rig[1]
+	var rope: Rope = rig[3]
+	var x_tied := a.global_position.x
+	await _chained_jump("p1_", "right")
+	var land_tied := await _await_landing(a)
+	var tied_px := land_tied - x_tied
+	_release_all_keys()
+	lv.queue_free()
+	await _frames(3)
+	# súng cao su: người chơi 1 neo ở x = 1500, người chơi 2 đứng sau cách 290 pixel, cũng giữ neo, rồi nhảy
+	rig = await _rope_rig(map, 1500.0, 1210.0, 369.0)
+	lv = rig[0]
+	a = rig[1]
+	var b: Ball = rig[2]
+	rope = rig[3]
+	Input.action_press("p1_use")
+	Input.action_press("p2_use")
+	a.teleport(Vector2(1500.0, 369.0))
+	b.teleport(Vector2(1500.0 - 290.0, 369.0))
+	await _frames(25)
+	var stretched := rope.current_length()
+	var anchored_both := rope.is_anchored(a) and rope.is_anchored(b)
+	var x_sling := b.global_position.x
+	await _chained_jump("p2_", "right")
+	var land_sling := await _await_landing(b)
+	var sling_px := land_sling - x_sling
+	await _frames(60)
+	print("  slingshot: %.0f px (%.1f tiles) from the take-off to the landing; a normal full jump while tied: %.0f px (%.1f tiles); full jump with no rope: %.0f px (%.1f tiles)" % [sling_px, sling_px / 32.0, tied_px, tied_px / 32.0, free_px, free_px / 32.0])
+	_expect(anchored_both and stretched > 270.0, "slingshot: both players are anchored with the rope stretched (%.0f px) before the jump" % stretched)
+	_expect(tied_px > 0.0 and free_px > 500.0, "slingshot: reference jumps measured (tied %.0f px, untied %.0f px)" % [tied_px, free_px])
+	_expect(sling_px > tied_px * 1.8, "slingshot: flings the player %.1f times farther than a normal full jump while tied (%.0f px vs %.0f px)" % [sling_px / maxf(tied_px, 1.0), sling_px, tied_px])
+	_expect(sling_px > free_px * 0.9, "slingshot: reaches about as far as an untied full jump (%.0f px vs %.0f px) - past the anchor by %.0f px" % [sling_px, free_px, land_sling - a.global_position.x])
+	_expect(land_sling > a.global_position.x + 200.0 and absf(b.global_position.x - land_sling) < 40.0, "slingshot: the thrown player lands well past the anchor (x %.0f vs anchor %.0f) and the anchor keeps him there (drift %.0f px)" % [land_sling, a.global_position.x, absf(b.global_position.x - land_sling)])
+	_expect(absf(a.global_position.x - 1500.0) < 8.0, "slingshot: the anchor did not budge (%.1f px)" % absf(a.global_position.x - 1500.0))
+	_release_all_keys()
+	lv.queue_free()
+	await _frames(3)
+
+
+## Hạt xâu trên dây: nhặt sao thêm hạt ở giữa, hạt trượt về người đứng thấp, giữ khoảng cách, dừng ở hai đầu, cướp sao, hạt rơi, bead_counts.
+func _chained_bead_checks() -> void:
+	var map := _chained_flat_map(80, 10, 14)           # có một cột đất cao 3 ô ở cột 10..14
+	var rig := await _rope_rig(map, 9.0 * 32.0, 9.0 * 32.0 - 56.0, 369.0)
+	var lv: Level = rig[0]
+	var a: Ball = rig[1]
+	var b: Ball = rig[2]
+	var rope: Rope = rig[3]
+	var added := [0]
+	var dropped := [0]
+	rope.bead_added.connect(func() -> void: added[0] += 1)
+	rope.beads_dropped.connect(func(n: int) -> void: dropped[0] += n)
+	_expect(rope.beads.is_empty() and rope.bead_counts() == Vector2i.ZERO, "beads: none to begin with")
+	var bead := rope.add_bead()
+	_expect(rope.beads.size() == 1 and is_equal_approx(bead.t, 0.5) and added[0] == 1, "beads: a new bead starts in the middle of the rope (t = %.3f) and bead_added fires" % bead.t)
+	await _frames(40)
+	_expect(is_equal_approx(rope.beads[0].t, 0.5) and rope.bead_counts() == Vector2i.ZERO, "beads: players at the same height leave it where it is (t = %.3f), and a bead exactly in the middle counts for nobody" % rope.beads[0].t)
+	# người chơi 1 đứng lên cột cao: hạt trượt về phía người chơi 2 (thấp hơn)
+	a.teleport(_cpos(12.5, 8))                         # trên đỉnh cột đất (hàng 9 là mặt đất của cột)
+	await _frames(90)
+	_expect(a.global_position.y < b.global_position.y - 60.0, "beads: test setup, player 1 stands 3 tiles higher (%.0f vs %.0f)" % [a.global_position.y, b.global_position.y])
+	_expect(rope.beads[0].t > 0.9 and rope.bead_counts() == Vector2i(0, 1), "beads: slide toward the LOWER player, here player 2 (t = %.3f, counts %s)" % [rope.beads[0].t, str(rope.bead_counts())])
+	# đổi chỗ: người chơi 2 lên cột, người chơi 1 xuống: hạt chạy về phía người chơi 1
+	b.teleport(_cpos(12.5, 8))
+	a.teleport(_cpos(8.5, 11))
+	await _frames(150)
+	_expect(rope.beads[0].t < 0.1 and rope.bead_counts() == Vector2i(1, 0), "beads: ... and back toward player 1 when the players swap heights (t = %.3f, counts %s)" % [rope.beads[0].t, str(rope.bead_counts())])
+	# nhiều hạt: giữ khoảng cách, nằm trong dây, đúng thứ tự
+	rope.remove_bead(rope.beads[0])
+	for i in 4:
+		rope.add_bead()
+		await _frames(6)
+	await _frames(150)
+	var ts: Array[float] = []
+	for bd in rope.beads:
+		ts.append(bd.t)
+	ts.sort()
+	var min_gap := 1.0
+	for i in range(1, ts.size()):
+		min_gap = minf(min_gap, ts[i] - ts[i - 1])
+	_expect(rope.beads.size() == 4 and added[0] == 5 and ts[0] >= 0.0 and ts[3] <= 1.0 and ts[0] < 0.2, "beads: four beads all end up at player 1's end, inside the rope (t %s)" % str(ts))
+	_expect(min_gap > 0.03 and min_gap * rope.current_length() > 10.0, "beads: neighbours keep a small gap and do not overlap (min gap %.3f of the rope = %.0f px)" % [min_gap, min_gap * rope.current_length()])
+	_expect(rope.bead_counts() == Vector2i(4, 0), "beads: bead_counts counts each side (%s)" % str(rope.bead_counts()))
+
+	# --- bead_counts và hạt đúng giữa dây, rồi cướp sao, rồi hạt rơi (đóng băng để hạt không trượt) ---
+	rope.freeze_beads = true
+	await _frames(2)
+	_set_beads(rope, [0.5])
+	var odd: Rope.Bead = rope.beads[0]
+	_expect(rope.bead_counts() == Vector2i.ZERO, "beads: t = 0.5 exactly counts for nobody")
+	odd.t = 0.499
+	_expect(rope.bead_counts() == Vector2i(1, 0), "beads: t < 0.5 counts for player 1")
+	odd.t = 0.501
+	_expect(rope.bead_counts() == Vector2i(0, 1), "beads: t > 0.5 counts for player 2")
+	_set_beads(rope, [0.1, 0.25, 0.4, 0.7])
+	_expect(rope.steal_bead(b, a), "beads: steal_bead works when there are beads")
+	var tmax := 0.0
+	var tmin := 1.0
+	for bd in rope.beads:
+		tmax = maxf(tmax, bd.t)
+		tmin = minf(tmin, bd.t)
+	_expect(tmax > 0.95 and tmin > 0.2 and rope.bead_counts() == Vector2i(2, 2), "beads: stealing moves the bead nearest the victim (player 1) to the thief's end (player 2) (max t %.2f, min t %.2f, counts %s)" % [tmax, tmin, str(rope.bead_counts())])
+	var locked := 0
+	for bd in rope.beads:
+		if bd.lock > 0.0:
+			locked += 1
+	_expect(locked == 1, "beads: the stolen bead is locked for a moment so it cannot slide straight back")
+	rope.beads.clear()
+	_expect(not rope.steal_bead(b, a), "beads: nothing to steal from an empty rope")
+	_set_beads(rope, [0.1, 0.2, 0.3, 0.4, 0.6])
+	var n_drop := rope.drop_beads(1)
+	var left: Array[float] = []
+	for bd in rope.beads:
+		left.append(snappedf(bd.t, 0.01))
+	left.sort()
+	_expect(n_drop == 2 and dropped[0] == 2 and left == [0.3, 0.4, 0.6], "beads: half (rounded up) of the beads on player 1's side drop off, the ones nearest his end first (dropped %d, left %s)" % [n_drop, str(left)])
+	n_drop = rope.drop_beads(2)
+	_expect(n_drop == 1 and dropped[0] == 3 and rope.beads.size() == 2, "beads: half of one bead rounds up to one (dropped %d, %d beads left)" % [n_drop, rope.beads.size()])
+	_expect(rope.drop_beads(2) == 0 and rope.beads.size() == 2, "beads: nothing drops from an empty side")
+	lv.queue_free()
+	await _frames(3)
+
+
+## Cảnh Chained: màn dựng được, hai người chơi khác phím, camera, giới thiệu, nhặt sao thành hạt, cướp sao khi dẫm đầu.
+func _chained_mode_checks() -> void:
+	_expect(Game.has_method("start_chained") and Game.chained_totals.size() == 2 and Game.chained_index == 0 and load(Game.CHAINED_SCENE) != null, "Game: start_chained, chained_index, chained_totals and the scene exist")
+	for i in ChainedData.LEVELS.size():
+		var rows: PackedStringArray = []
+		for line in String(ChainedData.LEVELS[i]["map"]).split("\n"):
+			if line.strip_edges() != "":
+				rows.append(line)
+		var same := true
+		var walls := true
+		var found := {"O": 0, "P": 0, "F": 0, "*": 0, "K": 0}
+		for r in rows.size():
+			same = same and rows[r].length() == rows[0].length()
+			walls = walls and rows[r][0] == "#" and rows[r][rows[r].length() - 1] == "#"
+			for key in found:
+				found[key] += rows[r].count(key)
+		_expect(same and walls and found["O"] == 1 and found["P"] == 1 and found["F"] == 1 and found["*"] >= 10 and found["K"] >= 2 and found["K"] <= 4 and rows.size() >= 18 and rows.size() <= 24 and rows[0].length() >= 100 and rows[0].length() <= 140, "chained level '%s': %dx%d, equal rows, walls, one O / P / F, %d stars, %d checkpoints" % [ChainedData.LEVELS[i]["name"], rows[0].length(), rows.size(), found["*"], found["K"]])
+
+	Game.chained_totals[0] = 0
+	Game.chained_totals[1] = 0
+	var ch := await _make_chained(0, false)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var started := [0]
+	ch.level_started.connect(func() -> void: started[0] += 1)
+	_expect(ch.level_name == "Tied Together" and ch.balls.size() == 2 and ch.rope != null and ch.rope.ball_a == a and ch.rope.ball_b == b and ch.lives == Chained.LIVES and Chained.LIVES == 5, "chained: level 1 builds with two balls, the rope between them and %d shared lives" % ch.lives)
+	_expect(a.player_id == 1 and b.player_id == 2 and a.action_prefix == "p1_" and b.action_prefix == "p2_" and a != b, "chained: the two balls use different keys (%s / %s)" % [a.action_prefix, b.action_prefix])
+	_expect(a.get_collision_mask_value(2) and b.get_collision_mask_value(2), "chained: both balls collide with each other")
+	_expect(ch.spawn_points.size() == 2 and ch.spawn_points[0] == ch.level.start_position and ch.spawn_points[1].x > ch.spawn_points[0].x + 64.0 and ch.spawn_points[1].x < ch.spawn_points[0].x + 200.0 and is_equal_approx(ch.spawn_points[0].y, ch.spawn_points[1].y), "chained: P2 spawns a couple of tiles right of O (%s, %s)" % [str(ch.spawn_points[0]), str(ch.spawn_points[1])])
+	var stars := 0
+	var kinds := {}
+	for n in ch.level.get_children():
+		if n is Pickup:
+			kinds[n.kind] = kinds.get(n.kind, 0) + 1
+	stars = kinds.get("star", 0)
+	_expect(ch.level.star_total == stars and stars >= 10 and kinds.get("finish", 0) == 1 and kinds.get("checkpoint", 0) >= 2 and kinds.get("heart", 0) >= 1, "chained: level 1 has %d stars, a finish, %d checkpoints and %d hearts" % [stars, kinds.get("checkpoint", 0), kinds.get("heart", 0)])
+	_expect(not ch.match_running and a.dead and b.dead, "chained: nobody can move during the READY intro")
+	ch.kill_both("pit", a)
+	_expect(ch.lives == Chained.LIVES, "chained: nothing can kill the players during the intro")
+	await _frames(25)
+	_expect(ch.match_running and not a.dead and not b.dead and started[0] == 1, "chained: after the intro the players can move and level_started fires once")
+	await _frames(45)
+	_expect(a.on_ground and b.on_ground, "chained: both balls stand on the ground at the start")
+	_expect(ch.hud.message_label.text == "GO!" or ch.hud.message_label.text == "READY...", "chained: the HUD says READY... / GO!")
+
+	# --- camera: giữa hai người, zoom ra xa khi dây căng ---
+	_expect(is_equal_approx(ch.zoom_for_separation(0.0), 1.0) and is_equal_approx(ch.zoom_for_separation(ch.rope.rest_length), 1.0) and is_equal_approx(ch.zoom_for_separation(ch.rope.max_length), Chained.MIN_ZOOM) and ch.zoom_for_separation((ch.rope.rest_length + ch.rope.max_length) / 2.0) < 0.95, "chained camera: zoom is 1.0 up to rest_length and falls to %.2f at max_length" % Chained.MIN_ZOOM)
+	var mid := (a.global_position + b.global_position) / 2.0
+	_expect(ch.camera.global_position.distance_to(mid + Vector2(0.0, -40.0)) < 6.0 and ch.camera.zoom.x > 0.97, "chained camera: starts centred between the two players at zoom %.2f" % ch.camera.zoom.x)
+	Input.action_press("p1_use")
+	Input.action_press("p2_use")
+	await _chained_move(ch, _cpos(3.5, 15), _cpos(3.5, 15) + Vector2(300.0, 0.0), 25)
+	await _frames(150)
+	mid = (a.global_position + b.global_position) / 2.0
+	_expect(ch.camera.zoom.x < 0.8 and ch.camera.zoom.x >= Chained.MIN_ZOOM - 0.001 and absf(ch.camera.global_position.x - mid.x) < 12.0, "chained camera: zooms out smoothly as the rope stretches (zoom %.2f at %.0f px) and follows the midpoint" % [ch.camera.zoom.x, ch.rope.current_length()])
+	_release_all_keys()
+	await _chained_move(ch, a.global_position, a.global_position + Vector2(64.0, 0.0), 3)
+	await _frames(240)
+	_expect(ch.camera.zoom.x > 0.97, "chained camera: zooms back in when the players come together (%.2f)" % ch.camera.zoom.x)
+
+	# --- nhặt sao: thêm hạt ở giữa dây; nhặt tim: +1 mạng (tối đa 5) ---
+	var got := [0]
+	ch.rope.bead_added.connect(func() -> void: got[0] += 1)
+	ch.level.collect_star(a)
+	await _frames(2)
+	_expect(ch.rope.beads.size() == 1 and got[0] == 1 and is_equal_approx(ch.rope.beads[0].t, 0.5), "chained: touching a star puts a bead in the middle of the rope")
+	ch.lives = 3
+	ch.level.collect_heart()
+	ch.level.collect_heart()
+	ch.level.collect_heart()
+	_expect(ch.lives == Chained.LIVES, "chained: hearts give +1 life up to the maximum (%d)" % ch.lives)
+	var star_node: Pickup = null
+	for n in ch.level.get_children():                  # ngôi sao gần người chơi 1 nhất
+		if n is Pickup and n.kind == "star" and (star_node == null or n.global_position.distance_to(a.global_position) < star_node.global_position.distance_to(a.global_position)):
+			star_node = n
+	await _chained_move(ch, a.global_position, star_node.global_position + Vector2(0.0, -16.0), 4)   # chạm một ngôi sao thật bằng người chơi 2
+	_expect(ch.rope.beads.size() == 2 and not is_instance_valid(star_node), "chained: either player touching a real star adds a bead and removes the star (%d beads)" % ch.rope.beads.size())
+	var cp_pos := _cpos(35.5, 15)
+	var cp_node: Pickup = null
+	for n in ch.level.get_children():
+		if n is Pickup and n.kind == "checkpoint" and absf(n.global_position.x - cp_pos.x) < 4.0:
+			cp_node = n
+	await _chained_move(ch, cp_node.global_position + Vector2(-40.0, -16.0), cp_node.global_position + Vector2(0.0, -16.0), 4)
+	_expect(cp_node.used and ch.respawn_position.distance_to(cp_node.global_position + Vector2(0.0, -16.0)) < 1.0 and ch.respawn_points[0].x < ch.respawn_position.x and ch.respawn_points[1].x > ch.respawn_position.x, "chained: either player touching a checkpoint sets it for both (respawn %s)" % str(ch.respawn_position))
+
+	# --- dẫm đầu bạn: hạt gần đầu nạn nhân nhảy sang đầu kẻ dẫm ---
+	ch.rope.freeze_beads = true
+	_set_beads(ch.rope, [0.2, 0.45, 0.6, 0.8])
+	await _chained_move(ch, _cpos(30.5, 15), _cpos(32.5, 15), 40)
+	a.teleport(Vector2(b.global_position.x + 4.0, b.global_position.y - 160.0))   # người chơi 1 rơi xuống đầu người chơi 2
+	await _frames(40)
+	var tmax := 0.0
+	var tmin := 1.0
+	for bd in ch.rope.beads:
+		tmax = maxf(tmax, bd.t)
+		tmin = minf(tmin, bd.t)
+	_expect(ch.rope.beads.size() == 4 and tmin < 0.06 and tmax < 0.8 and ch.rope.bead_counts() == Vector2i(3, 1) and ch.hud.message_label.text.contains("STEALS"), "chained: P1 stomping P2's head moves the bead nearest P2 to P1's end with a message (counts %s, '%s')" % [str(ch.rope.bead_counts()), ch.hud.message_label.text])
+	_expect(ch.lives == Chained.LIVES, "chained: stomping the partner costs nobody a life")
+	await _free_chained(ch)
+
+
+## Chết chung: cả hai hồi sinh ở cờ lưu, mất 1 mạng, miễn sát thương, một nửa sao phía người chết rơi ra đất và nhặt lại được, hết mạng thì chơi lại.
+func _chained_death_checks() -> void:
+	Game.chained_totals[0] = 0
+	Game.chained_totals[1] = 0
+	var ch := await _make_chained()
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var rope := ch.rope
+	var died: Array[String] = []
+	var back := [0]
+	ch.players_died.connect(func(cause: String) -> void: died.append(cause))
+	ch.players_respawned.connect(func() -> void: back[0] += 1)
+	var cp: Pickup = null
+	for n in ch.level.get_children():
+		if n is Pickup and n.kind == "checkpoint" and absf(n.global_position.x - _cpos(35.5, 15).x) < 4.0:
+			cp = n
+			break
+	await _chained_move(ch, cp.global_position + Vector2(0.0, -16.0), cp.global_position + Vector2(40.0, -16.0), 6)   # người chơi 1 cắm cờ ở cột 35
+	var respawn_pos := ch.respawn_position
+	_expect(cp.used and respawn_pos.distance_to(cp.global_position + Vector2(0.0, -16.0)) < 1.0, "death: player 1 touching the checkpoint activates it for both")
+	# người chơi 1 có 4 hạt, người chơi 2 có 2 hạt
+	rope.freeze_beads = true
+	_set_beads(rope, [0.1, 0.2, 0.3, 0.4, 0.7, 0.8])
+	_expect(rope.bead_counts() == Vector2i(4, 2), "death: test setup, 4 beads on player 1's half and 2 on player 2's")
+	await _chained_move(ch, _cpos(25.5, 15), _cpos(27.5, 15), 20)   # đi xa chỗ cờ để thấy hai người bị đưa về
+	ch.kill_both("hurt", a)
+	_expect(ch.lives == Chained.LIVES - 1 and died == ["hurt"] and a.dead and b.dead, "death: either player dying kills both and costs one shared life (lives %d)" % ch.lives)
+	await _frames(2)
+	_expect(not a.visible and not b.visible and not rope.visible and rope.bead_counts() == Vector2i(2, 2) and ch.hud.message_label.text.contains("P1 DROPPED 2 STARS"), "death: half (rounded up) of the dead player's half of the beads leave the rope (counts %s, '%s')" % [str(rope.bead_counts()), ch.hud.message_label.text.replace("\n", " / ")])
+	ch.kill_both("pit", b)
+	_expect(ch.lives == Chained.LIVES - 1 and died.size() == 1, "death: a second death while waiting to respawn is ignored")
+	await _frames(40)
+	_expect(back[0] == 1 and not a.dead and not b.dead and a.visible and b.visible and rope.visible, "death: both respawn alive after the delay (players_respawned x%d)" % back[0])
+	_expect(a.invuln > 0.5 and b.invuln > 0.5, "death: both respawn with brief invulnerability (%.2f / %.2f s)" % [a.invuln, b.invuln])
+	_expect(absf(a.global_position.x - (respawn_pos.x - Chained.RESPAWN_SPREAD)) < 6.0 and absf(b.global_position.x - (respawn_pos.x + Chained.RESPAWN_SPREAD)) < 6.0 and absf(a.global_position.y - respawn_pos.y) < 8.0, "death: both are at the checkpoint, player 1 on the left and player 2 on the right (%s / %s)" % [str(a.global_position.round()), str(b.global_position.round())])
+	_expect(rope.current_length() < rope.rest_length and rope.tension() == 0.0 and not rope.is_anchored(a) and not rope.is_anchored(b), "death: the rope is slack again after the respawn (%.0f px)" % rope.current_length())
+	_expect(ch.dropped_stars.size() == 2, "death: two stars scattered on the ground")
+	var near_ok := true
+	for s in ch.dropped_stars:
+		near_ok = near_ok and is_instance_valid(s) and s.kind == "star" and absf(s.position.x - respawn_pos.x) < 260.0 and absf(s.position.x - respawn_pos.x) > 40.0 and absf(s.position.y - (respawn_pos.y + 16.0)) < 4.0
+	_expect(near_ok, "death: the dropped stars lie on the ground around the respawn point, not on top of the players")
+	var before := rope.beads.size()
+	var star: Pickup = ch.dropped_stars[0]
+	rope.freeze_beads = false
+	a.teleport(star.global_position + Vector2(0.0, -16.0))     # nhặt lại
+	await _frames(4)
+	_expect(not is_instance_valid(star) and rope.beads.size() == before + 1, "death: a dropped star can be collected again and becomes a new bead (%d -> %d beads)" % [before, rope.beads.size()])
+	# miễn sát thương: chạm gai lúc đó không mất mạng
+	var lives_now := ch.lives
+	b.take_hit()
+	await _frames(3)
+	_expect(ch.lives == lives_now and died.size() == 1, "death: while invulnerable, being hurt costs nothing")
+	await _frames(100)
+	# gai thật: chạm gai (take_hit sau khi hết miễn sát thương) giết cả hai
+	b.take_hit()
+	await _frames(3)
+	_expect(ch.lives == lives_now - 1 and died.size() == 2 and died[1] == "hurt", "death: spikes / enemies (Ball.hurt) kill both with cause 'hurt' (lives %d)" % ch.lives)
+	await _frames(40)
+	# rơi xuống vực
+	lives_now = ch.lives
+	b.teleport(Vector2(b.global_position.x, ch.level.size.y + 400.0))
+	await _frames(100)
+	_expect(ch.lives == lives_now - 1 and died.size() == 3 and died[2] == "pit" and not a.dead and not b.dead, "death: falling below the level kills both with cause 'pit' and they come back (lives %d)" % ch.lives)
+	# kill_both không có người gây ra (sự kiện): không rơi sao
+	await _frames(60)
+	var stars_before := ch.dropped_stars.size()
+	ch.kill_both("event")
+	await _frames(60)
+	_expect(died.size() == 4 and died[3] == "event" and ch.dropped_stars.size() == stars_before, "death: kill_both(cause) with no culprit drops no stars (cause '%s')" % died[3])
+	# hết mạng: chơi lại màn
+	await _frames(60)
+	var restarts := [0]
+	ch.restart_requested.connect(func() -> void: restarts[0] += 1)
+	var respawns_before: int = back[0]
+	ch.lives = 1
+	ch.kill_both("hurt", b)
+	_expect(ch.lives == 0, "death: the last life is gone")
+	await _frames(10)
+	_expect(ch.hud.message_label.text.contains("Out of lives") and restarts[0] == 0, "death: out of lives shows a message first ('%s')" % ch.hud.message_label.text)
+	await _frames(40)
+	_expect(restarts[0] == 1 and back[0] == respawns_before and a.dead and b.dead, "death: out of lives restarts the level instead of respawning (restart requested x%d)" % restarts[0])
+	await _free_chained(ch)
+
+
+## Về đích: chỉ tính khi cả hai còn sống, chốt số sao, cộng tổng, bảng kết quả với người thắng và nút Next / Retry / Menu.
+func _chained_finish_checks() -> void:
+	for scenario in [[Vector2i(3, 1), "PLAYER 1 WINS THE LEVEL!"], [Vector2i(1, 2), "PLAYER 2 WINS THE LEVEL!"], [Vector2i(2, 2), "IT'S A TIE!"]]:
+		Game.chained_totals[0] = 2                      # tổng sao từ các màn trước
+		Game.chained_totals[1] = 3
+		var want: Vector2i = scenario[0]
+		var ch := await _make_chained()
+		var a := ch.balls[0]
+		var b := ch.balls[1]
+		var finished_counts: Array[Vector2i] = []
+		ch.level_finished.connect(func(c: Vector2i) -> void: finished_counts.append(c))
+		ch.rope.freeze_beads = true
+		var values: Array[float] = []
+		for i in want.x:
+			values.append(0.1 + 0.05 * i)
+		for i in want.y:
+			values.append(0.9 - 0.05 * i)
+		values.append(0.5)                              # hạt đúng giữa dây: không tính cho ai
+		_set_beads(ch.rope, values)
+		var flag: Pickup = null
+		for n in ch.level.get_children():
+			if n is Pickup and n.kind == "finish":
+				flag = n
+		if scenario[1] == "PLAYER 1 WINS THE LEVEL!":   # lần đầu thử về đích lúc một người đang chết: không tính
+			b.dead = true                               # (người chết thì dây không kéo, nên dịch người chơi 1 một mình tới đích được)
+			a.teleport(flag.global_position + Vector2(0.0, -16.0))
+			await _frames(6)
+			_expect(not ch.finished and ch.match_running and finished_counts.is_empty() and not flag.used, "finish: touching the flag while the partner is dead does not finish the level (and the flag stays usable)")
+			b.teleport(a.global_position + Vector2(-60.0, 0.0))
+			await _frames(3)
+			b.dead = false
+		else:
+			a.teleport(flag.global_position + Vector2(-70.0, -16.0))
+		b.teleport(flag.global_position + Vector2(0.0, -16.0))    # chạm cờ đích bằng người chơi 2 (một người là đủ)
+		await _frames(4)
+		_expect(ch.finished and not ch.match_running and finished_counts == [want] and ch.counts() == want, "finish: either player touching F with both alive finishes the level (counts %s)" % str(ch.counts()))
+		_expect(Game.chained_totals[0] == 2 + want.x and Game.chained_totals[1] == 3 + want.y, "finish: the stars are added to the running totals (%s)" % str(Game.chained_totals))
+		_expect(a.dead and b.dead and ch.rope.freeze_beads and ch.hud.result_panel == null, "finish: the players are frozen and the panel is still to come")
+		ch.kill_both("pit", a)
+		_expect(ch.lives == Chained.LIVES, "finish: nothing can kill the players after the finish")
+		await _frames(30)
+		var hud := ch.hud
+		_expect(hud.result_panel != null and hud.result_title.text == scenario[1], "finish: result panel says '%s' (%s)" % [scenario[1], hud.result_title.text if hud.result_title else "-"])
+		_expect(hud.result_p1.text == "P1  %d" % want.x and hud.result_p2.text == "%d  P2" % want.y and hud.result_totals.text.contains(str(2 + want.x)) and hud.result_totals.text.contains(str(3 + want.y)), "finish: the panel shows the stars per player and the running totals ('%s' '%s' '%s')" % [hud.result_p1.text, hud.result_p2.text, hud.result_totals.text])
+		_expect(hud.retry_button != null and hud.menu_button != null and hud.next_button == null and not ch.has_next_level(), "finish: Retry and Menu exist, and no Next level when it was the last level")
+		_expect(hud.retry_pressed.get_connections().size() >= 1 and hud.menu_pressed.get_connections().size() >= 1 and hud.next_pressed.get_connections().size() >= 1, "finish: the buttons are wired up")
+		_expect(ch._base_totals == [2, 3], "finish: Retry restores the totals from before the level (%s)" % str(ch._base_totals))
+		await _free_chained(ch)
+	# bảng kết quả có nút Next level khi còn màn sau
+	var hud2 := ChainedHud.new()
+	add_child(hud2)
+	hud2.setup("x", 5)
+	hud2.show_result(Vector2i(1, 0), [1, 0], true)
+	_expect(hud2.next_button != null and hud2.retry_button != null and hud2.menu_button != null, "finish: Next level, Retry and Menu are all there when another level follows")
+	hud2.queue_free()
+	await _frames(2)
+	Game.chained_totals[0] = 0
+	Game.chained_totals[1] = 0
+
+
+## Màn 1 qua được bằng hai người chơi: qua khe 7 ô bằng súng cao su (neo + dây hất), rồi người kia được kéo qua. Nhảy thường khi bị trói thì không qua được.
+func _chained_level_checks() -> void:
+	var ch := await _make_chained()
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var lv := ch.level
+	# hình học dùng bên dưới: bờ trái là đất tới cột 63, khe từ cột 64 tới 70, bờ phải từ cột 71 (hàng 16 là mặt đất)
+	var gap_ok := lv.char_at(16, 63) == "#" and lv.char_at(16, 64) == "." and lv.char_at(16, 70) == "." and lv.char_at(16, 71) == "#" and lv.char_at(15, 63) == "." and lv.char_at(15, 71) == "."
+	_expect(gap_ok, "level 1: the wide gap is where the test expects it (columns 64..70, 7 tiles wide)")
+	var far_edge := 71.0 * 32.0
+	var edge := _cpos(63.5, 15)
+	# người chơi 1 neo ở mép khe, người chơi 2 lùi ra sau 290 pixel cho dây căng, cũng giữ neo, rồi nhảy về phía người chơi 1
+	Input.action_press("p1_use")
+	Input.action_press("p2_use")
+	await _chained_move(ch, edge, edge - Vector2(290.0, 0.0), 25)
+	_expect(ch.rope.is_anchored(a) and ch.rope.is_anchored(b) and ch.rope.current_length() > 270.0, "level 1: both players are anchored at the gap with the rope stretched (%.0f px)" % ch.rope.current_length())
+	var beads_before := ch.rope.beads.size()
+	await _chained_jump("p2_", "right")
+	var landed := await _await_landing(b)
+	await _frames(40)
+	_expect(landed > far_edge + 15.0 and b.global_position.x > far_edge + 15.0 and ch.lives == Chained.LIVES, "level 1: the slingshot lands player 2 on the far side of the 7-tile gap (landed x %.0f, far edge %.0f), nobody died" % [landed, far_edge])
+	_expect(ch.rope.is_anchored(b) and absf(b.global_position.x - landed) < 40.0, "level 1: holding anchor on landing keeps player 2 on the far side instead of being dragged back (x %.0f)" % b.global_position.x)
+	_expect(ch.rope.beads.size() >= beads_before + 2, "level 1: the three stars on the flight path of the slingshot are collected on the way (%d new beads)" % (ch.rope.beads.size() - beads_before))
+	# người chơi 2 giữ neo bên kia khe; người chơi 1 nhả neo... không, vẫn giữ neo tới lúc nhảy; bị dây kéo qua
+	await _chained_jump("p1_", "right", 45)
+	var landed1 := await _await_landing(a)
+	await _frames(40)
+	_expect(landed1 > far_edge + 15.0 and a.global_position.x > far_edge + 15.0 and not a.dead and ch.lives == Chained.LIVES, "level 1: player 1 is pulled across by the rope from player 2's anchor (landed x %.0f)" % landed1)
+	_release_all_keys()
+	var all_beads := ch.rope.beads.size()
+	_expect(all_beads >= 3, "level 1: the pair crossed the gap with %d stars threaded on the rope" % all_beads)
+	await _free_chained(ch)
+
+	# thung lũng (hố 4 ô có bậc thang): một người nhảy đủ lực từ đáy là lên khỏi thung lũng được
+	var lv2 := _make_level(ChainedData.LEVELS[0]["map"])
+	var solo := _make_ball(lv2, _cpos(47.5, 19))
+	solo.set_player(1)
+	await _frames(40)
+	await _chained_jump("p1_", "right", 30)
+	await _frames(100)
+	_expect(solo.on_ground and solo.global_position.y < 520.0 and solo.global_position.x > 1700.0, "level 1: from the bottom of the valley a three-quarter jump climbs out onto the high ground (%s)" % str(solo.global_position.round()))
+	_release_all_keys()
+	lv2.queue_free()
+	await _frames(3)
+
+	# nhảy thường qua khe khi bị trói (không neo): dây giật người kia xuống khe, cả hai rơi
+	ch = await _make_chained()
+	a = ch.balls[0]
+	b = ch.balls[1]
+	await _chained_move(ch, _cpos(63.5, 15), _cpos(62.0, 15), 40)
+	await _chained_jump("p2_", "right", 50)
+	await _frames(400)
+	_expect(ch.lives < Chained.LIVES, "level 1: an ordinary tied jump across the gap does not work, the partner is dragged into the pit (lives %d)" % ch.lives)
+	await _free_chained(ch)

@@ -7,6 +7,7 @@ const MENU_SCENE := "res://scenes/menu.tscn"         # đường dẫn cảnh me
 const PLAY_SCENE := "res://scenes/play.tscn"         # đường dẫn cảnh chơi màn thường
 const ENDLESS_SCENE := "res://scenes/endless.tscn"   # đường dẫn cảnh chế độ vô tận
 const BRAWL_SCENE := "res://scenes/brawl.tscn"      # đường dẫn cảnh chế độ đấu 2 người (Bounce Brawl)
+const CHAINED_SCENE := "res://scenes/chained.tscn"   # đường dẫn cảnh chế độ Chained (2 người bị trói bằng dây)
 const SAVE_PATH :="user://bouncing_ball.cfg"   # file lưu (nằm trong thư mục dữ liệu của Godot trên máy)
 
 ## Phím điều khiển. Muốn đổi phím thì sửa ở đây (KEY_A, KEY_SPACE, KEY_LEFT...).
@@ -35,6 +36,8 @@ var best_score := 0        # điểm cao nhất chế độ vô tận
 var total_stars := 0       # tổng số sao đã gom qua mọi lượt chơi
 var save_enabled := true   # bài test tắt đi để không ghi đè kỷ lục thật
 var brawl_vs_bot := false  # chế độ đấu 2 người: true = người chơi 2 là máy (Brawl tạo BrawlBot khi cờ này bật)
+var chained_index := 0     # màn Chained đang chơi (chỉ số trong ChainedData.LEVELS)
+var chained_totals: Array[int] = [0, 0]   # tổng sao của người chơi 1 và 2 qua các màn Chained đã xong (màn đầu bắt đầu thì về 0)
 
 
 ## Godot gọi một lần khi mở game: cài phím, đọc file lưu.
@@ -65,6 +68,15 @@ func start_endless() -> void:
 func start_brawl(vs_bot := false) -> void:
 	brawl_vs_bot = vs_bot                    # nhớ để cảnh đấu và nút Rematch dùng lại
 	get_tree().change_scene_to_file(BRAWL_SCENE)   # chuyển sang cảnh đấu 2 người
+
+
+## Vào chế độ Chained (hai người bị trói bằng dây) ở màn số `index`. Màn đầu (index 0) thì tính lại tổng sao từ 0.
+func start_chained(index := 0) -> void:
+	chained_index = index                    # nhớ màn sẽ chơi (cảnh Chained đọc lại)
+	if index == 0:                           # bắt đầu lại từ màn đầu
+		chained_totals[0] = 0                # tổng sao người chơi 1 về 0
+		chained_totals[1] = 0                # tổng sao người chơi 2 về 0
+	get_tree().change_scene_to_file(CHAINED_SCENE)   # chuyển sang cảnh Chained
 
 
 ## Sang màn kế tiếp. Trả về false nếu đã là màn cuối.

@@ -13,7 +13,8 @@ const LOGO_SIZE := Vector2(410, 150)                # kích thước hiển th�
 
 var brawl_button: Button                # nút BRAWL 2P (chế độ đấu 2 người)
 var bot_button: Button                  # nút BRAWL VS BOT (đấu với máy), nằm cạnh nút BRAWL 2P trong cùng một hàng
-var brawl_row: HBoxContainer            # hàng chứa hai nút Brawl, nằm ngay dưới lưới nút màn
+var chained_button: Button              # nút CHAINED 2P (hai người bị trói bằng dây), nằm cùng hàng với hai nút Brawl
+var brawl_row: HBoxContainer            # hàng chứa ba nút 2 người (Brawl, Brawl vs bot, Chained), nằm ngay dưới lưới nút màn
 var _demo_ball: Ball                    # nhân vật đứng nghịch ở dải đất
 var _demo_start := Vector2.ZERO         # chỗ đứng ban đầu, để đưa về khi rơi ra ngoài
 var _howto: PanelContainer              # bảng HOW TO PLAY (null = đang đóng)
@@ -70,6 +71,7 @@ func _ready() -> void:
 	var endless := Button.new()                       # nút chế độ vô tận, đứng đầu danh sách
 	endless.text = "ENDLESS RUN   best %d" % Game.best_score   # hiện kèm kỷ lục điểm
 	endless.custom_minimum_size = Vector2(380, 60)   # cỡ nút
+	endless.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # hai cột của lưới chia đều bề ngang (lưới rộng bằng hàng ba nút 2 người)
 
 	endless.pressed.connect(Game.start_endless)   # bấm là vào chế độ vô tận
 	level_grid.add_child(endless)               # đặt vào lưới nút
@@ -82,6 +84,7 @@ func _ready() -> void:
 		b.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT   # icon đứng bên phải chữ
 		b.expand_icon = false                   # giữ đúng cỡ icon, không kéo giãn
 		b.custom_minimum_size = Vector2(380, 56)   # cỡ nút
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # chia đều bề ngang hai cột
 		b.pressed.connect(Game.start_level.bind(i))    # bấm là vào màn i
 		level_grid.add_child(b)                 # đặt vào lưới
 	var bank := HBoxContainer.new()                    # hàng tổng sao đã gom: icon sao + chữ
@@ -94,27 +97,35 @@ func _ready() -> void:
 	bank_text.text = "%d stars collected" % Game.total_stars   # vd: 12 stars collected
 	bank_text.add_theme_color_override("font_color", Color("#f7d046"))   # chữ màu vàng
 	bank.add_child(bank_text)                          # đặt chữ sau icon
-	brawl_row = HBoxContainer.new()                    # một hàng rộng ngay dưới lưới nút, chứa hai nút Brawl cạnh nhau
-	brawl_row.add_theme_constant_override("separation", 12)   # khoảng cách giữa hai nút (bằng khoảng cách ngang của lưới nút màn)
+	brawl_row = HBoxContainer.new()                    # một hàng rộng ngay dưới lưới nút, chứa ba nút 2 người cạnh nhau (Brawl, Brawl vs bot, Chained)
+	brawl_row.add_theme_constant_override("separation", 12)   # khoảng cách giữa các nút (bằng khoảng cách ngang của lưới nút màn)
 	brawl_button = Button.new()                        # nút chế độ đấu 2 người
 	brawl_button.text = "BRAWL 2P"                     # chữ trên nút
-	brawl_button.custom_minimum_size = Vector2(0, 56)   # cao 56
+	brawl_button.custom_minimum_size = Vector2(296, 56)   # rộng tối thiểu 296 (vừa đủ chữ BRAWL VS BOT; ba nút cùng cỡ nên bằng nhau), cao 56
 	brawl_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # hai nút chia đều bề ngang hàng
 	brawl_button.add_theme_color_override("font_color", Color("#ff8e9c"))   # chữ đỏ hồng, nhắc màu người chơi 1
 	brawl_button.pressed.connect(Game.start_brawl.bind(false))   # bấm là vào chế độ đấu 2 người
 	brawl_row.add_child(brawl_button)                  # đặt vào hàng
 	bot_button = Button.new()                          # nút đấu với máy (người chơi 2 là bot)
 	bot_button.text = "BRAWL VS BOT"                   # chữ trên nút
-	bot_button.custom_minimum_size = Vector2(0, 56)    # cao 56
+	bot_button.custom_minimum_size = Vector2(296, 56)  # rộng tối thiểu 296, cao 56
 	bot_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # chia đều bề ngang
 	bot_button.add_theme_color_override("font_color", Color("#8ec9ff"))   # chữ xanh nhạt, nhắc màu người chơi 2 (máy)
 	bot_button.pressed.connect(Game.start_brawl.bind(true))   # bấm là vào đấu với máy
 	brawl_row.add_child(bot_button)                    # đặt vào hàng
+	chained_button = Button.new()                      # nút chế độ hai người bị trói bằng dây
+	chained_button.text = "CHAINED 2P"                 # chữ trên nút
+	chained_button.custom_minimum_size = Vector2(296, 56)   # rộng tối thiểu 296, cao 56
+	chained_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL   # chia đều bề ngang
+	chained_button.add_theme_color_override("font_color", Color("#f7d046"))   # chữ vàng, nhắc những ngôi sao xâu trên dây
+	chained_button.pressed.connect(Game.start_chained.bind(0))   # bấm là vào chế độ Chained từ màn đầu
+	brawl_row.add_child(chained_button)                # đặt vào hàng
 	level_grid.get_parent().add_child(brawl_row)       # gắn vào khối chứa lưới nút
 	level_grid.get_parent().move_child(brawl_row, level_grid.get_index() + 1)   # đặt ngay dưới lưới nút
 	level_grid.get_parent().add_child(bank)     # gắn vào khối chứa lưới nút
 	level_grid.get_parent().move_child(bank, brawl_row.get_index() + 1)   # đặt ngay dưới hàng nút Brawl
 	level_grid.columns = 2                             # các nút màn xếp 2 cột cho gọn
+	level_grid.custom_minimum_size = Vector2(912, 0)   # lưới rộng bằng hàng ba nút 2 người (3 x 296 + 2 x 12) cho hai bên thẳng hàng
 	level_grid.add_theme_constant_override("h_separation", 12)   # khoảng cách ngang giữa hai cột
 	var bottom_row := HBoxContainer.new()              # hàng dưới cùng: HOW TO PLAY và Quit
 	bottom_row.alignment = BoxContainer.ALIGNMENT_CENTER   # các nút nằm giữa hàng
