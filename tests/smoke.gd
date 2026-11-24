@@ -6,7 +6,8 @@ extends Node
 var failures := 0
 var shots_dir := ""
 var hurts := 0
-var bot_seed_offset := 0                # cộng vào hạt giống của các mục bot (godot ... -- --bot-seed=N): thử xem mục nào mong manh với hạt giống khác
+var trial_info := ""                    # ghi chú của lần thử dung sai gần nhất (để in khi chỉnh màn)
+var bot_seed_offset := 0               # cộng vào hạt giống của các mục bot (godot ... -- --bot-seed=N): thử xem mục nào mong manh với hạt giống khác
 
 
 ## Chạy lần lượt các kiểm tra; in "ok" hoặc "FAIL" cho từng mục.
@@ -25,6 +26,12 @@ func _ready() -> void:
 
 	if OS.get_cmdline_user_args().has("--only-chained"):   # lúc đang làm chế độ Chained: chạy riêng phần này cho nhanh (godot ... -- --only-chained)
 		await _chained_checks()
+		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
+		get_tree().quit(1 if failures > 0 else 0)
+		return
+
+	if OS.get_cmdline_user_args().has("--only-chained-levels"):   # chỉ chạy phần màn 2, màn 3 và chuyển màn của Chained (godot ... -- --only-chained-levels)
+		await _chained_levels_23_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
@@ -2579,6 +2586,7 @@ func _chained_checks() -> void:
 	await _chained_death_checks()
 	await _chained_finish_checks()
 	await _chained_level_checks()
+	await _chained_levels_23_checks()
 
 
 ## Dây: không lực dưới độ dài chùng, kéo khi căng, không vượt quá độ dài tối đa, đứt thì tắt, chỉnh được lúc đang chạy.
@@ -2900,7 +2908,7 @@ func _chained_mode_checks() -> void:
 			walls = walls and rows[r][0] == "#" and rows[r][rows[r].length() - 1] == "#"
 			for key in found:
 				found[key] += rows[r].count(key)
-		_expect(same and walls and found["O"] == 1 and found["P"] == 1 and found["F"] == 1 and found["*"] >= 10 and found["K"] >= 2 and found["K"] <= 4 and rows.size() >= 18 and rows.size() <= 24 and rows[0].length() >= 100 and rows[0].length() <= 140, "chained level '%s': %dx%d, equal rows, walls, one O / P / F, %d stars, %d checkpoints" % [ChainedData.LEVELS[i]["name"], rows[0].length(), rows.size(), found["*"], found["K"]])
+		_expect(same and walls and found["O"] == 1 and found["P"] == 1 and found["F"] == 1 and found["*"] >= 10 and found["K"] >= 2 and found["K"] <= 4 and rows.size() >= 18 and rows.size() <= 24 and rows[0].length() >= 100 and rows[0].length() <= 170, "chained level '%s': %dx%d, equal rows, walls, one O / P / F, %d stars, %d checkpoints" % [ChainedData.LEVELS[i]["name"], rows[0].length(), rows.size(), found["*"], found["K"]])
 
 	Game.chained_totals[0] = 0
 	Game.chained_totals[1] = 0
@@ -3113,7 +3121,7 @@ func _chained_finish_checks() -> void:
 		var hud := ch.hud
 		_expect(hud.result_panel != null and hud.result_title.text == scenario[1], "finish: result panel says '%s' (%s)" % [scenario[1], hud.result_title.text if hud.result_title else "-"])
 		_expect(hud.result_p1.text == "P1  %d" % want.x and hud.result_p2.text == "%d  P2" % want.y and hud.result_totals.text.contains(str(2 + want.x)) and hud.result_totals.text.contains(str(3 + want.y)), "finish: the panel shows the stars per player and the running totals ('%s' '%s' '%s')" % [hud.result_p1.text, hud.result_p2.text, hud.result_totals.text])
-		_expect(hud.retry_button != null and hud.menu_button != null and hud.next_button == null and not ch.has_next_level(), "finish: Retry and Menu exist, and no Next level when it was the last level")
+		_expect(hud.retry_button != null and hud.menu_button != null and hud.next_button != null and ch.has_next_level(), "finish: Retry, Menu and Next level exist on level 1 (more levels follow); the last level has no Next (see the level flow checks)")
 		_expect(hud.retry_pressed.get_connections().size() >= 1 and hud.menu_pressed.get_connections().size() >= 1 and hud.next_pressed.get_connections().size() >= 1, "finish: the buttons are wired up")
 		_expect(ch._base_totals == [2, 3], "finish: Retry restores the totals from before the level (%s)" % str(ch._base_totals))
 		await _free_chained(ch)
@@ -3182,4 +3190,680 @@ func _chained_level_checks() -> void:
 	await _chained_jump("p2_", "right", 50)
 	await _frames(400)
 	_expect(ch.lives < Chained.LIVES, "level 1: an ordinary tied jump across the gap does not work, the partner is dragged into the pit (lives %d)" % ch.lives)
+	await _free_chained(ch)
+
+
+# ====================================================================================================================
+# Màn 2 và màn 3 của Chained: kiểm tra bản đồ, sao với tới được, từng đoạn khó qua được bằng phím thật, chuyển màn.
+# ====================================================================================================================
+
+## Các hàng của bản đồ chữ (cùng cách tách của Level.build).
+func _chained_rows(map: String) -> PackedStringArray:
+	var rows: PackedStringArray = []
+	for line in map.strip_edges(false, true).split("\n"):
+		if line.strip_edges() != "":
+			rows.append(line)
+	return rows
+
+
+## Các ô "đứng được" của bản đồ: ô không phải đất mà ngay dưới là đất, cộng đường đi của bệ di chuyển (=, đi ngang theo > hoặc dọc theo |) và ván bập bênh (S, dài 5 ô).
+## Trả về từ điển {Vector2i(hàng, cột): true}.
+func _chained_stand_cells(rows: PackedStringArray) -> Dictionary:
+	var stand := {}
+	var n := rows.size()
+	var w := rows[0].length()
+	for r in n:
+		for c in w:
+			var ch := rows[r][c]
+			if ch == "#" or ch == "=" or Level.SLOPES.has(ch):
+				continue
+			var below := rows[r + 1][c] if r + 1 < n else "#"
+			if below == "#" or Level.SLOPES.has(below):
+				stand[Vector2i(r, c)] = true
+			if ch == "S":                                  # ván bập bênh dài 5 ô quanh trục
+				for dc in range(-2, 3):
+					stand[Vector2i(r, c + dc)] = true
+	for r in n:                                            # bệ di chuyển: mọi chỗ bệ có thể đứng
+		var c := 0
+		while c < w:
+			if rows[r][c] != "=":
+				c += 1
+				continue
+			var c0 := c
+			while c < w and rows[r][c] == "=":
+				c += 1
+			var c1 := c - 1
+			var r_to := r
+			var shift := 0
+			var gt := rows[r].find(">", c)
+			if gt != -1:
+				shift = gt - c0
+			else:
+				for rr in n:
+					if rows[rr][c0] == "|":
+						r_to = rr
+			for rr in range(mini(r, r_to), maxi(r, r_to) + 1):
+				for cc in range(c0, c1 + 1 + shift):
+					stand[Vector2i(rr - 1, cc)] = true
+	return stand
+
+
+## Các ngôi sao mà hai người KHÔNG thể với tới theo quy tắc đơn giản dựa trên bản đồ (danh sách rỗng = tốt). Một sao với tới được nếu:
+##   1. nhảy: có ô đứng được cách tối đa 4 cột và nằm thấp hơn sao 0..4 hàng (nhảy đủ lực cao 5 ô);
+##   2. lò xo: có lò xo (T) cách tối đa 3 cột và nằm thấp hơn sao 0..6 hàng (lò xo bật khi có người neo bên cạnh cao ~6,7 ô);
+##   3. bay: có hố không đáy rộng >= 6 cột trong vòng 12 cột quanh sao (cột không có đất từ hàng của sao trở xuống) và có ô đứng được cách tối đa 18 cột,
+##      thấp hơn sao 0..6 hàng (súng cao su / nhảy đôi bay xa 18 ô, vòng cung cao tới ~5 ô).
+## Ngoài ra sao không được bị bịt kín (ít nhất một ô kề không phải đất).
+func _chained_star_problems(rows: PackedStringArray) -> Array[String]:
+	var stand := _chained_stand_cells(rows)
+	var n := rows.size()
+	var w := rows[0].length()
+	var tramps: Array[Vector2i] = []
+	for r in n:
+		for c in w:
+			if rows[r][c] == "T":
+				tramps.append(Vector2i(r, c))
+	var problems: Array[String] = []
+	for r in n:
+		for c in w:
+			if rows[r][c] != "*":
+				continue
+			var sealed := true                             # có ô kề trống không
+			for d in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1)]:
+				var rr: int = r + d.x
+				var cc: int = c + d.y
+				if rr >= 0 and rr < n and cc >= 0 and cc < w and rows[rr][cc] != "#":
+					sealed = false
+			if sealed:
+				problems.append("star (row %d, col %d) is sealed inside the ground" % [r, c])
+				continue
+			var ok := false
+			for cell: Vector2i in stand:                   # quy tắc 1: nhảy
+				if absi(cell.y - c) <= 4 and cell.x - r >= 0 and cell.x - r <= 4:
+					ok = true
+					break
+			if not ok:                                     # quy tắc 2: lò xo
+				for t in tramps:
+					if absi(t.y - c) <= 3 and t.x - r >= 0 and t.x - r <= 6:
+						ok = true
+						break
+			if not ok:                                     # quy tắc 3: bay qua hố không đáy gần đó
+				var pit_run := 0                           # số cột liền nhau không đáy trong vòng 12 cột (không có đất từ hàng của sao trở xuống)
+				var best_run := 0
+				for cc in range(maxi(c - 12, 0), mini(c + 13, w)):
+					var open_col := true
+					for rr in range(r, n):
+						if rows[rr][cc] == "#":
+							open_col = false
+					pit_run = pit_run + 1 if open_col else 0
+					best_run = maxi(best_run, pit_run)
+				if best_run >= 6:
+					for cell: Vector2i in stand:
+						if absi(cell.y - c) <= 18 and cell.x - r >= 0 and cell.x - r <= 6:
+							ok = true
+							break
+			if not ok:
+				problems.append("star (row %d, col %d) is out of reach of every standable tile" % [r, c])
+	return problems
+
+
+## Đếm ký tự `ch` trong các hàng.
+func _chained_count_char(rows: PackedStringArray, ch: String) -> int:
+	var n := 0
+	for row in rows:
+		n += row.count(ch)
+	return n
+
+
+## Kiểm tra tĩnh màn Chained số `index` (không cần dựng cảnh): tên, kích thước, tường hai mép, ký tự bắt buộc, số sao / cờ lưu / tim / quái, sao với tới được, đất đủ dày.
+func _chained_static_checks(index: int, w_lo: int, w_hi: int, star_lo: int, star_hi: int, checkpoints: int, hearts_min: int, enemies_min: int) -> void:
+	var data: Dictionary = ChainedData.LEVELS[index]
+	var tag := "level %d (%s)" % [index + 1, data["name"]]
+	var rows := _chained_rows(data["map"])
+	var w := rows[0].length()
+	var same := true
+	for row in rows:
+		same = same and row.length() == w
+	_expect(String(data["name"]) != "" and same and w >= w_lo and w <= w_hi and rows.size() <= 26, "%s: has a name, equal-length rows, width %d in %d..%d, height %d <= 26" % [tag, w, w_lo, w_hi, rows.size()])
+	var walled := true
+	for row in rows:
+		walled = walled and row[0] == "#" and row[w - 1] == "#"
+	_expect(walled, "%s: the left and right edges are walled (# on every row)" % tag)
+	_expect(_chained_count_char(rows, "O") == 1 and _chained_count_char(rows, "P") == 1 and _chained_count_char(rows, "F") == 1, "%s: exactly one O, one P and one F" % tag)
+	var stars := _chained_count_char(rows, "*")
+	_expect(stars >= star_lo and stars <= star_hi, "%s: %d stars (want %d..%d)" % [tag, stars, star_lo, star_hi])
+	_expect(_chained_count_char(rows, "K") == checkpoints, "%s: %d checkpoints (K), want %d" % [tag, _chained_count_char(rows, "K"), checkpoints])
+	_expect(_chained_count_char(rows, "+") >= hearts_min and _chained_count_char(rows, "e") >= enemies_min, "%s: %d hearts (want >= %d) and %d enemies (want >= %d)" % [tag, _chained_count_char(rows, "+"), hearts_min, _chained_count_char(rows, "e"), enemies_min])
+	var banned := 0
+	for forbidden in ["M", "G", "A", "B", "D", "a", "b", "d"]:   # không boss, không cổng, không cửa / nút
+		banned += _chained_count_char(rows, forbidden)
+	_expect(banned == 0, "%s: no boss, gate, door or button characters" % tag)
+	var problems := _chained_star_problems(rows)
+	_expect(problems.is_empty(), "%s: every star is within reach of some standable tile (%s)" % [tag, ", ".join(problems) if not problems.is_empty() else "rule: hop / trampoline / flight arc"])
+	var stand := _chained_stand_cells(rows)
+	var thin := 0                                          # ô đứng trên đất mà đất dưới mỏng (người không rơi xuyên qua sàn)
+	for cell: Vector2i in stand:
+		if cell.x + 1 < rows.size() and rows[cell.x + 1][cell.y] == "#":
+			var depth := 0
+			for rr in range(cell.x + 1, rows.size()):
+				if rows[rr][cell.y] == "#":
+					depth += 1
+				else:
+					break
+			if depth < 3 and cell.x + 1 + depth < rows.size():
+				thin += 1
+	_expect(thin == 0, "%s: every piece of ground is at least 3 tiles thick (%d thin spots)" % [tag, thin])
+	var checks_ok := true                                  # cờ lưu, lò xo nằm trên đất
+	for r in rows.size():
+		for c in w:
+			if rows[r][c] in ["K", "T"] and not (r + 1 < rows.size() and rows[r + 1][c] == "#"):
+				checks_ok = false
+	_expect(checks_ok, "%s: every checkpoint and trampoline stands on solid ground" % tag)
+
+
+## Cả hai người nhảy cùng lúc theo hướng `dir`: người chơi 1 giữ phím `f1` khung rồi nhảy, người chơi 2 giữ `f2` khung rồi nhảy (nhảy đôi). Chờ thêm `wait` khung.
+func _chained_hop2(f1: int, f2: int, wait := 0, dir := "right") -> void:
+	Input.action_press("p1_" + dir)
+	Input.action_press("p2_" + dir)
+	for f in maxi(f1, f2) + 1:
+		if f == f1:
+			Input.action_press("p1_jump")
+		if f == f2:
+			Input.action_press("p2_jump")
+		await _frames(1)
+		Input.action_release("p1_jump")
+		Input.action_release("p2_jump")
+	Input.action_release("p1_" + dir)
+	Input.action_release("p2_" + dir)
+	await _frames(wait)
+
+
+## Như _chained_hop2 nhưng người chơi 2 bắt đầu giữ phím chậm hơn người chơi 1 `off` khung (`off` âm: người chơi 1 chậm hơn); mỗi người giữ phím `f1` / `f2` khung rồi nhảy.
+func _chained_hop2o(f1: int, f2: int, off := 0, wait := 0, dir := "right") -> void:
+	var s1 := maxi(-off, 0)
+	var s2 := maxi(off, 0)
+	for t in maxi(s1 + f1, s2 + f2) + 1:
+		if t == s1:
+			Input.action_press("p1_" + dir)
+		if t == s2:
+			Input.action_press("p2_" + dir)
+		if t == s1 + f1:
+			Input.action_press("p1_jump")
+		if t == s2 + f2:
+			Input.action_press("p2_jump")
+		await _frames(1)
+		Input.action_release("p1_jump")
+		Input.action_release("p2_jump")
+	Input.action_release("p1_" + dir)
+	Input.action_release("p2_" + dir)
+	await _frames(wait)
+
+
+## Chờ cho `ball` đứng yên trên đất (nảy xong), tối đa `max_frames` khung.
+func _chained_settle(ball: Ball, max_frames := 150) -> void:
+	var still := 0
+	for f in max_frames:
+		await _frames(1)
+		still = still + 1 if (ball.on_ground and ball.linear_velocity.length() < 25.0) else 0
+		if still >= 6:
+			return
+
+
+## Người chơi `prefix` nhảy lặp lại (giữ `dir` `frames` khung rồi nhảy, chờ đứng yên) tới khi đứng trên ô cột >= `col_min`, hàng `row` (tối đa `tries` lần). Trả về có tới nơi không.
+func _chained_hop_to(ball: Ball, prefix: String, col_min: float, row: int, frames: int, tries := 6, dir := "right") -> bool:
+	for t in tries:
+		await _chained_settle(ball)
+		if ball.global_position.x >= col_min * 32.0 and absf(ball.global_position.y - ((row + 1) * 32.0 - 16.0)) < 8.0:
+			return true
+		await _chained_jump(prefix, dir, frames)
+	await _chained_settle(ball)
+	return ball.global_position.x >= col_min * 32.0 and absf(ball.global_position.y - ((row + 1) * 32.0 - 16.0)) < 8.0
+
+
+## Bóng đứng trên đất ở ô (cột `col` có thể lẻ, hàng `row`) trong sai số `tol` pixel.
+func _chained_at(ball: Ball, col: float, row: int, tol := 24.0) -> bool:
+	return ball.on_ground and absf(ball.global_position.x - col * 32.0) < tol and absf(ball.global_position.y - ((row + 1) * 32.0 - 16.0)) < 10.0
+
+
+## Súng cao su qua một khe: người chơi 1 neo ở ô mép (cột `edge_col`, hàng `row`), người chơi 2 lùi `back` pixel cũng neo rồi nhảy đầy lực về phía người neo (bị dây hất qua đầu),
+## rồi người chơi 1 nhảy theo (được dây kéo qua). Mép bờ bên kia ở cột `far_col`. Trả về số hạt (sao) nhặt thêm trên đường bay.
+func _chained_sling(ch: Chained, label: String, edge_col: int, row: int, far_col: int, p1_frames := 45, back := 290.0) -> int:
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var edge := _cpos(edge_col + 0.5, row)
+	Input.action_press("p1_use")
+	Input.action_press("p2_use")
+	await _chained_move(ch, edge, edge - Vector2(back, 0.0), 25)
+	var stretched := ch.rope.current_length()
+	var beads0 := ch.rope.beads.size()
+	await _chained_jump("p2_", "right")
+	var landed := await _await_landing(b)
+	await _frames(40)
+	var far_px := far_col * 32.0 + 15.0
+	_expect(stretched > 270.0 and landed > far_px and b.global_position.x > far_px and ch.lives == Chained.LIVES, "%s: the slingshot throws player 2 over the gap (rope %.0f px, landed x %.1f, far edge col %d), nobody died" % [label, stretched, landed / 32.0, far_col])
+	await _chained_jump("p1_", "right", p1_frames)
+	var landed1 := await _await_landing(a)
+	await _frames(40)
+	_expect(landed1 > far_px and a.global_position.x > far_px and not a.dead and not b.dead and ch.lives == Chained.LIVES, "%s: player 1 is pulled across by the rope from player 2's anchor (landed x %.1f), both alive" % [label, landed1 / 32.0])
+	_release_all_keys()
+	return ch.rope.beads.size() - beads0
+
+
+# ---- Thử nghiệm dung sai: mỗi hàm dựng một cảnh mới, làm đúng một đoạn khó với các tham số (số khung giữ phím, lệch giờ, chỗ đứng) rồi trả về có qua được không ----
+
+## Súng cao su: người chơi 1 neo ở ô mép (`edge_col`, `row`), người chơi 2 lùi `back` pixel, neo, nhảy `f2` khung; rồi người chơi 1 nhảy `f1` khung theo.
+func _try_sling(idx: int, edge_col: int, row: int, far_col: int, back: float, f2: int, f1: int) -> bool:
+	var ch := await _make_chained(idx)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var edge := _cpos(edge_col + 0.5, row)
+	Input.action_press("p1_use")
+	Input.action_press("p2_use")
+	await _chained_move(ch, edge, edge - Vector2(back, 0.0), 25)
+	await _chained_jump("p2_", "right", f2)
+	await _await_landing(b)
+	await _frames(40)
+	var far_px := far_col * 32.0 + 15.0
+	var ok := b.global_position.x > far_px and ch.lives == Chained.LIVES
+	if ok:
+		await _chained_jump("p1_", "right", f1)
+		await _await_landing(a)
+		await _frames(40)
+		ok = a.global_position.x > far_px and not a.dead and not b.dead and ch.lives == Chained.LIVES
+	await _free_chained(ch)
+	return ok
+
+
+## Hàm thử chung: dựng màn `idx`, đặt hai người ở (`c1`, `c2`, hàng `row`), chạy `steps` (mảng [f1, f2, off, chờ]) bằng nhảy đôi, trả về [cảnh, ok_sống].
+func _try_pair(idx: int, c1: float, c2: float, row: int, steps: Array, extra_keys := [], clear := false) -> Array:
+	var ch := await _make_chained(idx)
+	for k in extra_keys:
+		Input.action_press(k)
+	if clear:                                                # dọn sạch quái (dẫm quái đã có bài test riêng) để đo riêng cú nhảy qua gai
+		for n in ch.level.get_children():
+			if n is Enemy:
+				n.squash()
+	await _chained_move(ch, _cpos(c1, row), _cpos(c2, row), 40)
+	for s in steps:
+		await _chained_hop2o(s[0], s[1], s[2], s[3])
+	await _chained_settle(ch.balls[0])
+	await _chained_settle(ch.balls[1])
+	return [ch, ch.lives == Chained.LIVES and not ch.balls[0].dead]
+
+
+## Số khung `f` (cả hai), lệch giờ `off`: màn 2, ba bậc thang (nhảy đôi lặp lại) tới cao nguyên.
+func _try_stairs(f: int, off: int) -> bool:
+	var ch := await _make_chained(1)
+	await _chained_move(ch, _cpos(14.5, 19), _cpos(13.4, 19), 40)
+	await _chained_jump("p1_", "right", f)                   # lần lượt từng người nhảy một cú `f` khung từ dưới sàn lên bậc thang (cao 1 ô)
+	await _chained_settle(ch.balls[0])
+	await _chained_jump("p2_", "right", f)
+	await _chained_settle(ch.balls[1])
+	var ok := true
+	for b in ch.balls:
+		ok = ok and b.global_position.y < 19.0 * 32.0 and b.global_position.x > 16.0 * 32.0 and b.global_position.x < 37.0 * 32.0
+	ok = ok and ch.lives == Chained.LIVES
+	await _free_chained(ch)
+	return ok
+
+
+## Cầu bập bênh: hai lần nhảy đôi (`h` rồi `t` khung), lệch giờ `off`.
+func _try_seesaw(h: int, t: int, off: int) -> bool:
+	var r := await _try_pair(1, 51.8, 50.6, 19, [[h, h, off, 60], [t, t, off, 120]])
+	var ch: Chained = r[0]
+	var ok: bool = r[1] and ch.balls[0].global_position.x > 58.2 * 32.0 and ch.balls[1].global_position.x > 58.2 * 32.0 and ch.balls[0].global_position.y < 20.0 * 32.0 and ch.balls[1].global_position.y < 20.0 * 32.0
+	await _free_chained(ch)
+	return ok
+
+
+## Tháp lò xo (màn 2): người chơi 2 đứng ở cột `p2col` neo, người chơi 1 đứng ở `p1col` nhảy `c1` khung lên lò xo rồi giữ phải; xong người chơi 2 nhảy trái `c2` khung lên lò xo (người chơi 1 neo trên ledge).
+func _try_tower(p1col: float, p2col: float, c1: int, c2: int) -> bool:
+	var ch := await _make_chained(1)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	Input.action_press("p2_use")
+	Input.action_press("p1_use")
+	await _chained_move(ch, _cpos(p1col, 19), _cpos(p2col, 19), 40)
+	Input.action_press("p1_right")
+	await _frames(c1)
+	Input.action_press("p1_jump")
+	await _frames(1)
+	Input.action_release("p1_jump")
+	await _frames(150)
+	Input.action_release("p1_right")
+	await _chained_settle(a)
+	var ok := a.global_position.x > 70.0 * 32.0 and a.global_position.y < 14.0 * 32.0 and ch.lives == Chained.LIVES
+	trial_info = "phase1 %s a.x=%.2f" % ["ok" if ok else "FAIL", a.global_position.x / 32.0]
+	if ok:
+		Input.action_press("p1_use")
+		await _frames(30)
+		Input.action_release("p2_use")
+		await _frames(10)
+		Input.action_press("p2_left")
+		await _frames(c2)
+		Input.action_press("p2_jump")
+		await _frames(1)
+		Input.action_release("p2_jump")
+		Input.action_release("p2_left")
+		await _frames(5)
+		Input.action_press("p2_right")
+		await _frames(150)
+		await _chained_settle(b)
+		ok = b.global_position.x > 70.0 * 32.0 and b.global_position.y < 14.0 * 32.0 and ch.lives == Chained.LIVES and not a.dead
+	await _free_chained(ch)
+	return ok
+
+
+## Thang máy màn 2: hai người ở mép tháp (cột `c1`, `c2`, hàng 13), nhảy đôi lên thang (`h1` / `h2` khung, lệch giờ `off`) lúc thang ở đáy, chờ lên đỉnh, nhảy đôi sang cao nguyên (`e` khung).
+func _try_lift2(c1: float, c2: float, h1: int, h2: int, off: int, e: int, e_off: int) -> bool:
+	var ch := await _make_chained(1)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	await _chained_move(ch, _cpos(c1, 13), _cpos(c2, 13), 40)
+	var plat: MovingPlatform = _first(ch.level, MovingPlatform)
+	for f in 1500:
+		await _frames(1)
+		if plat.position.y >= 447.0 and f > 30:
+			break
+	await _chained_hop2o(h1, h2, off, 30)
+	for f in 1500:
+		await _frames(1)
+		if plat.position.y <= 262.0:
+			break
+	await _chained_hop2o(e, e, e_off, 40)
+	await _chained_settle(a)
+	await _chained_settle(b)
+	var ok := a.global_position.x > 90.0 * 32.0 and b.global_position.x > 90.0 * 32.0 and a.global_position.y < 8.0 * 32.0 and b.global_position.y < 8.0 * 32.0 and ch.lives == Chained.LIVES
+	await _free_chained(ch)
+	return ok
+
+
+## Hầm trần gai màn 3: hai người ở (`c1`, `c2`, hàng 19) nhảy đôi `f` khung (lệch giờ `off`) qua cụm gai đầu tiên; ok nếu cả hai đáp xuống sàn trong [`lo`, `hi`) và còn sống.
+func _try_tunnel(c1: float, c2: float, f: int, off: int, lo: float, hi: float, clear := false) -> bool:
+	var r := await _try_pair(2, c1, c2, 19, [[f, f, off, 70]], [], clear)
+	var ch: Chained = r[0]
+	var ok: bool = r[1] and ch.balls[0].global_position.x > lo * 32.0 and ch.balls[0].global_position.x < hi * 32.0 and ch.balls[1].global_position.x > lo * 32.0 and ch.balls[1].global_position.x < hi * 32.0 and ch.balls[0].global_position.y > 18.0 * 32.0
+	await _free_chained(ch)
+	return ok
+
+
+## Nhảy đôi từ ledge xuống đảo (màn 3): hai người ở (`c1`, `c2`, hàng 13) nhảy `f1` / `f2` khung, lệch giờ `off`; ok nếu cả hai đứng trên đảo (cột >= `far`, hàng 19) và còn sống.
+func _try_leap(c1: float, c2: float, f1: int, f2: int, off: int, far: float, limit: float) -> bool:
+	var r := await _try_pair(2, c1, c2, 13, [[f1, f2, off, 0]])
+	var ch: Chained = r[0]
+	await _frames(100)
+	await _chained_settle(ch.balls[0])
+	await _chained_settle(ch.balls[1])
+	var ok: bool = ch.lives == Chained.LIVES and ch.balls[0].global_position.x > far * 32.0 and ch.balls[1].global_position.x > far * 32.0 and ch.balls[0].global_position.y > 18.0 * 32.0 and ch.balls[1].global_position.y > 18.0 * 32.0 and ch.balls[0].global_position.x < limit * 32.0 and ch.balls[1].global_position.x < limit * 32.0
+	await _free_chained(ch)
+	return ok
+
+
+## Chờ thang máy (`plat`) tới đáy (`bottom` = true) hoặc tới đỉnh (false); `skip` khung đầu bỏ qua (để chờ lượt tới kế tiếp).
+func _chained_wait_lift(plat: MovingPlatform, bottom: bool, skip := 0) -> void:
+	for f in 2000:
+		await _frames(1)
+		if f >= skip and ((bottom and plat.position.y >= 639.0) or (not bottom and plat.position.y <= 452.0)):
+			return
+
+
+## Kiểm tra một cửa sổ dung sai: `fn` (nhận một giá trị, trả bool) phải thành công ở mọi giá trị trong `points` (hai mép và giữa cửa sổ). In ra giá trị nào hỏng.
+func _window(what: String, points: Array, fn: Callable) -> void:
+	var bad := []
+	for p in points:
+		var ok: bool = await fn.call(p)
+		if not ok:
+			bad.append(p)
+	_expect(bad.is_empty(), "%s: succeeds at %s%s" % [what, str(points), "" if bad.is_empty() else "  FAILS at %s" % str(bad)])
+
+
+## Thang máy màn 3 (cả hai cùng đi): hai người ở mép hầm (cột `c1`, `c2`, hàng 19) nhảy lên thang lúc ở đáy (`h1` / `h2` khung, lệch giờ `off`), chờ lên đỉnh, nhảy đôi `e` khung (lệch giờ `e_off`) sang ledge dưới trần gai.
+func _try_lift3(h1: int, h2: int, off: int, e: int, e_off: int, c1 := 105.0, c2 := 103.9) -> bool:
+	var ch := await _make_chained(2)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	await _chained_move(ch, _cpos(c1, 19), _cpos(c2, 19), 30)
+	var plat: MovingPlatform = _first(ch.level, MovingPlatform)
+	await _chained_wait_lift(plat, true, 30)
+	await _chained_hop2o(h1, h2, off, 0)
+	await _chained_wait_lift(plat, false)
+	await _chained_hop2o(e, e, e_off, 40)
+	await _chained_settle(a)
+	await _chained_settle(b)
+	var ok := a.global_position.x > 111.0 * 32.0 and b.global_position.x > 111.0 * 32.0 and a.global_position.y < 14.0 * 32.0 and b.global_position.y < 14.0 * 32.0 and ch.lives == Chained.LIVES
+	trial_info = "a=(%.2f,%.2f) b=(%.2f,%.2f) lives %d" % [a.global_position.x / 32.0, a.global_position.y / 32.0, b.global_position.x / 32.0, b.global_position.y / 32.0, ch.lives]
+	await _free_chained(ch)
+	return ok
+
+
+## Màn 2 và màn 3 của Chained.
+func _chained_levels_23_checks() -> void:
+	for c in get_children():
+		c.queue_free()
+	await _frames(3)
+	_release_all_keys()
+	_chained_static_checks(1, 110, 150, 12, 20, 3, 2, 2)
+	await _chained_level2_checks()
+	_chained_static_checks(2, 130, 170, 15, 22, 3, 2, 3)
+	await _chained_level3_checks()
+	var level1_problems := _chained_star_problems(_chained_rows(ChainedData.LEVELS[0]["map"]))   # quy tắc "sao với tới được" cũng đúng với màn 1 (đã chơi thử)
+	_expect(level1_problems.is_empty(), "level 1: the star reachability rule agrees with the hand-tested level (%s)" % str(level1_problems))
+	await _chained_flow_checks()
+
+
+## Chuyển màn thật bằng Game.start_chained: màn 1 -> về đích -> Next level -> màn 2 -> về đích -> Next level -> màn 3 -> về đích: bảng kết quả không còn nút Next, tổng sao cộng dồn.
+func _chained_flow_checks() -> void:
+	for c in get_children():
+		c.queue_free()
+	await _frames(3)
+	var tree := get_tree()
+	var home := tree.current_scene                         # cảnh bài test: gỡ khỏi current_scene để đổi cảnh thật không xoá mất bài test
+	tree.current_scene = null
+	Game.chained_totals[0] = 9                             # tổng cũ: vào màn đầu thì phải về 0
+	Game.chained_totals[1] = 9
+	var bead_sets := [[0.1, 0.2, 0.8], [0.1, 0.9, 0.8, 0.7], [0.2]]   # số hạt mỗi màn: (2, 1), (1, 3), (1, 0)
+	var expected_totals := [Vector2i(2, 1), Vector2i(3, 4), Vector2i(4, 4)]
+	var names := ["Tied Together", "Up and Over", "Chain Reaction"]
+	var old_scene: Node = null
+	Game.start_chained(0)
+	for index in 3:
+		await _frames(5)                                   # cảnh mới được dựng ở cuối khung
+		var cur := tree.current_scene as Chained
+		_expect(cur != null and Game.chained_index == index and cur.level_name == names[index] and cur != old_scene, "flow: level %d is '%s' (Game.chained_index %d)" % [index + 1, names[index], Game.chained_index])
+		if index == 0:
+			_expect(Game.chained_totals == [0, 0], "flow: Game.start_chained(0) resets the running totals (%s)" % str(Game.chained_totals))
+		else:
+			_expect(old_scene == null or not is_instance_valid(old_scene) or old_scene.is_queued_for_deletion(), "flow: the previous level scene was replaced")
+		cur.finish_panel_delay = 0.2
+		for i in 300:                                      # chờ hết phần giới thiệu
+			if cur.match_running:
+				break
+			await _frames(1)
+		_expect(cur.match_running and cur.has_next_level() == (index < 2), "flow: level %d starts, has_next_level() is %s" % [index + 1, str(cur.has_next_level())])
+		_set_beads(cur.rope, bead_sets[index])
+		cur.rope.freeze_beads = true
+		var flag: Pickup = null
+		for n in cur.level.get_children():
+			if n is Pickup and n.kind == "finish":
+				flag = n
+		await _chained_move(cur, flag.global_position + Vector2(0.0, -16.0), flag.global_position + Vector2(-50.0, -16.0), 4)
+		for i in 120:
+			if cur.hud.result_panel != null:
+				break
+			await _frames(1)
+		_expect(cur.finished and Game.chained_totals[0] == expected_totals[index].x and Game.chained_totals[1] == expected_totals[index].y, "flow: finishing level %d adds its stars to the totals (%s, want %s)" % [index + 1, str(Game.chained_totals), str(expected_totals[index])])
+		if index < 2:
+			_expect(cur.hud.next_button != null, "flow: the result panel of level %d offers Next level" % (index + 1))
+			old_scene = cur
+			cur.hud.next_button.pressed.emit()             # bấm Next level: Game.start_chained(chỉ số + 1), đổi cảnh thật
+		else:
+			_expect(cur.hud.result_panel != null and cur.hud.next_button == null and cur.hud.retry_button != null and cur.hud.menu_button != null and not cur.has_next_level(), "flow: the result panel of the last level has no Next level, only Retry and Menu")
+			_release_all_keys()
+			await _frames(150)
+			cur.queue_free()
+			await _frames(3)
+	tree.current_scene = home
+	Game.chained_index = 0
+	Game.chained_totals[0] = 0
+	Game.chained_totals[1] = 0
+
+
+## Màn 3 "Chain Reaction": ba khe liền nhau (súng cao su), hầm trần gai, thang máy trong giếng, nhảy đôi qua khe 12 ô, đoạn quái dưới trần gai.
+func _chained_level3_checks() -> void:
+	var ch := await _make_chained(2)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var lv := ch.level
+	_expect(ch.level_name == "Chain Reaction" and ch.spawn_points.size() == 2 and ch.spawn_points[0].distance_to(ch.spawn_points[1]) < 160.0, "level 3: builds as 'Chain Reaction' with both spawns close together (%s)" % str(ch.spawn_points))
+	_expect(lv.star_total == 20 and a.on_ground and b.on_ground and ch.match_running and ch.lives == Chained.LIVES, "level 3: %d stars, both players start on the ground and alive" % lv.star_total)
+
+	# --- chuỗi ba khe 7 ô (đảo thấp dần 2 ô mỗi lần): mỗi khe một lần súng cao su, người chơi 1 theo sau bằng cú nhảy vừa lực ---
+	var beads1 := await _chained_sling(ch, "level 3 gap 1", 14, 13, 22, 16)
+	var beads2 := await _chained_sling(ch, "level 3 gap 2", 35, 15, 43, 16)
+	var beads3 := await _chained_sling(ch, "level 3 gap 3", 56, 17, 64, 30)
+	_expect(beads1 >= 2 and beads2 >= 2 and beads3 >= 2, "level 3 chain: the stars on the flight paths of the three slingshots are collected (%d, %d, %d new beads)" % [beads1, beads2, beads3])
+	await _free_chained(ch)
+
+	# --- dung sai: ba khe súng cao su ---
+	for gap in [["a", 14, 13, 22], ["b", 35, 15, 43], ["c", 56, 17, 64]]:
+		var tag: String = "level 3 gap " + gap[0]
+		await _window(tag + ": player 2 charges 30 / 40 / 50 frames (back-off 290 px)", [30, 40, 50], func(f): return await _try_sling(2, gap[1], gap[2], gap[3], 290.0, f, 16))
+		await _window(tag + ": player 2 backs off 250 / 290 / 320 px (a stretch window of 70 px)", [250, 290, 320], func(d): return await _try_sling(2, gap[1], gap[2], gap[3], float(d), 50, 16))
+		var follow: Array = [12, 30, 50] if gap[0] == "c" else [12, 17, 22]   # (hai khe đầu: nhảy 24..34 khung thì rơi xuống khe kế tiếp; nhảy đầy lực 36+ khung bay qua luôn)
+		await _window(tag + ": player 1 follows with " + str(follow) + " frames", follow, func(f): return await _try_sling(2, gap[1], gap[2], gap[3], 290.0, 50, f))
+		if gap[0] != "c":
+			await _window(tag + ": ... or with full power (36 / 42 / 50 frames; holding longer than 42 is the same jump)", [36, 42, 50], func(f): return await _try_sling(2, gap[1], gap[2], gap[3], 290.0, 50, f))
+
+	# --- hầm trần gai: hai cụm gai sàn rộng 2 ô, nhảy vừa lực (14..30 khung); nhảy gần đầy lực chạm gai trần ---
+	await _window("level 3 tunnel, first spike pad: jump of 14 / 22 / 30 frames", [14, 22, 30], func(f): return await _try_tunnel(81.4, 80.3, f, 0, 84.0, 94.0))
+	await _window("level 3 tunnel, first spike pad: players start 6 frames apart, either order", [-6, 6], func(o): return await _try_tunnel(81.4, 80.3, 22, o, 84.0, 94.0))
+	await _window("level 3 tunnel, second spike pad: jump of 14 / 22 / 30 frames", [14, 22, 30], func(f): return await _try_tunnel(93.4, 92.3, f, 0, 96.0, 106.0))
+	ch = await _make_chained(2)
+	a = ch.balls[0]
+	b = ch.balls[1]
+	var deaths: Array[String] = []
+	ch.players_died.connect(func(cause: String) -> void: deaths.append(cause))
+	await _chained_move(ch, _cpos(88.2, 19), _cpos(87.0, 19), 30)
+	await _chained_hop2(40, 40, 40)
+	_expect(deaths == ["hurt"] and ch.lives == Chained.LIVES - 1, "level 3 tunnel: a near-full-power jump (40 frames) hits the ceiling spikes and kills both (deaths %s, lives %d)" % [str(deaths), ch.lives])
+	await _free_chained(ch)
+
+	# --- thang máy trong giếng: cả hai lên thang ở đáy rồi nhảy sang ledge dưới trần gai (nhảy quá cao chạm gai) ---
+	await _window("level 3 lift: player 1 boards with 12 / 19 / 26 frames (player 2: 14)", [12, 19, 26], func(h): return await _try_lift3(h, 14, 0, 20, 0))
+	await _window("level 3 lift: player 2 boards with 14 / 22 / 30 frames (player 1: 10)", [14, 22, 30], func(h): return await _try_lift3(10, h, 0, 20, 0))
+	await _window("level 3 lift: boarding 6 frames apart, either order", [-6, 6], func(o): return await _try_lift3(10, 14, o, 20, 0))
+	await _window("level 3 lift: both hop to the ledge with 16 / 24 / 34 frames (higher hits the roof spikes)", [16, 24, 34], func(e): return await _try_lift3(10, 14, 0, e, 0))
+	await _window("level 3 lift: ... starting that hop 6 frames apart, either order", [-6, 6], func(o): return await _try_lift3(10, 14, 0, 20, o))
+
+	# --- nhảy đôi từ ledge xuống đảo qua khe 8 ô: nhảy lệch một người thì dây kéo người kia xuống hố; hai người nhảy đủ mạnh (24 khung trở lên, đầy lực cũng được) thì qua ---
+	ch = await _make_chained(2)
+	a = ch.balls[0]
+	b = ch.balls[1]
+	deaths.clear()
+	ch.players_died.connect(func(cause: String) -> void: deaths.append(cause))
+	await _chained_move(ch, _cpos(126.4, 13), _cpos(125.2, 13), 40)
+	await _chained_jump("p1_", "right", 32)                 # chỉ người chơi 1 nhảy: người chơi 2 bị dây giật xuống khe
+	await _frames(240)
+	_expect(not deaths.is_empty() and ch.lives == Chained.LIVES - 1, "level 3 leap: a lone jump over the 8-tile gap fails, the partner is dragged into the pit (deaths %s, lives %d)" % [str(deaths), ch.lives])
+	await _free_chained(ch)
+	await _window("level 3 leap: both jump with 24 / 36 / 48 frames (48 = full power, landing 22 tiles away still short of the spike pad)", [24, 36, 48], func(f): return await _try_leap(126.4, 125.2, f, f, 0, 135.4, 150.0))
+	await _window("level 3 leap: both jump with 26 frames, starting 6 frames apart, either order", [-6, 6], func(o): return await _try_leap(126.4, 125.2, 26, 26, o, 135.4, 150.0))
+	await _window("level 3 leap: both jump with 32 frames, starting 6 frames apart, either order", [-6, 6], func(o): return await _try_leap(126.4, 125.2, 32, 32, o, 135.4, 150.0))
+	await _window("level 3 leap: both jump with full power (48 frames), player 2 starting 0 / 6 frames later", [0, 6], func(o): return await _try_leap(126.4, 125.2, 48, 48, o, 135.4, 150.0))
+	ch = await _make_chained(2)
+	a = ch.balls[0]
+	b = ch.balls[1]
+	lv = ch.level
+
+	# --- đoạn quái: hai cụm gai, hai ô giữa mỗi ô có hai con quái đi tuần ---
+	var enemies: Array[Enemy] = []
+	for n in lv.get_children():
+		if n is Enemy:
+			enemies.append(n)
+	_expect(enemies.size() == 4, "level 3 gauntlet: four patrolling enemies in the cell after the spike pad")
+	# mỗi con quái bị dẫm từ trên xuống là chết (không phải người chơi bị thương): thả người chơi 1 từ trên cao xuống đầu từng con
+	var stomped_all := true
+	for e in enemies:
+		var ex := e.global_position.x
+		await _chained_move(ch, Vector2(ex, 17.4 * 32.0), Vector2(ex - 36.0, 17.4 * 32.0), 1)
+		for f in 90:
+			await _frames(1)
+			if e.dead:
+				break
+		stomped_all = stomped_all and e.dead and ch.lives == Chained.LIVES
+	_expect(stomped_all, "level 3 gauntlet: landing on top of each enemy squashes it and nobody gets hurt (lives %d)" % ch.lives)
+	# đoạn quái đã dọn: cụm gai rộng 2 ô, ô sau rộng 10 ô, trần gai chỉ cho nhảy vừa lực; đi hết tới cờ đích
+	await _chained_move(ch, _cpos(149.4, 19), _cpos(148.3, 19), 60)
+	await _chained_hop2(19, 19, 100)
+	var before_flag := ch.lives == Chained.LIVES and not ch.finished and a.global_position.x > 152.0 * 32.0 and b.global_position.x > 152.0 * 32.0
+	await _chained_hop2(15, 15, 100)
+	_expect(before_flag and ch.finished and ch.lives == Chained.LIVES, "level 3 finish: with the enemies cleared the pair hops over the spike pad under the roof of spikes and touches the finish flag (finished %s, lives %d)" % [str(ch.finished), ch.lives])
+	await _free_chained(ch)
+	await _window("level 3 gauntlet: the hop over the spike pad with 14 / 19 / 25 frames (enemies cleared)", [14, 19, 25], func(f): return await _try_tunnel(149.4, 148.3, f, 0, 152.0, 162.0, true))
+	await _window("level 3 gauntlet: ... players starting 6 frames apart, either order (19 frames)", [-6, 6], func(o): return await _try_tunnel(149.4, 148.3, 19, o, 152.0, 162.0, true))
+
+
+## Màn 2 "Up and Over": cầu thang, cầu bập bênh, tháp lò xo, thang máy, súng cao su trên cao, bậc thang xuống đích.
+func _chained_level2_checks() -> void:
+	var ch := await _make_chained(1)
+	var a := ch.balls[0]
+	var b := ch.balls[1]
+	var lv := ch.level
+	_expect(ch.level_name == "Up and Over" and ch.spawn_points.size() == 2 and ch.spawn_points[0].x < ch.spawn_points[1].x and ch.spawn_points[0].distance_to(ch.spawn_points[1]) < 160.0, "level 2: builds as 'Up and Over' with both spawns close together (%s)" % str(ch.spawn_points))
+	_expect(lv.star_total == 18 and a.on_ground and b.on_ground and not a.dead and ch.match_running and ch.lives == Chained.LIVES, "level 2: %d stars, both players start on the ground and alive" % lv.star_total)
+
+	await _free_chained(ch)
+
+	# --- Dung sai: mỗi đoạn khó phải qua được trong một khoảng số khung giữ phím đủ rộng (>= 12 khung = 0,2 giây), hai người nhảy cùng lúc thì chấp nhận lệch giờ +-6 khung ---
+	await _window("level 2 stairs: a single hop of 17 / 24 / 31 frames from the floor reaches the 1-tile steps (window 17..31 frames, 15 wide)", [17, 24, 31], func(f): return await _try_stairs(f, 0))
+	await _window("level 2 seesaw pit: the first double hop of 8 / 20 / 30 frames (second hop 26)", [8, 20, 30], func(h): return await _try_seesaw(h, 26, 0))
+	await _window("level 2 seesaw pit: the second double hop of 10 / 22 / 34 frames (first hop 22)", [10, 22, 34], func(t): return await _try_seesaw(22, t, 0))
+	await _window("level 2 seesaw pit: players starting 6 frames apart, either order (hops 22 and 26)", [-6, 6], func(o): return await _try_seesaw(22, 26, o))
+
+	# --- tháp 6 ô (người chơi 1 đứng cạnh dải lò xo, người chơi 2 neo cạnh đó): không lò xo thì không lên được; có lò xo thì cả hai lần lượt lên được ---
+	ch = await _make_chained(1)
+	a = ch.balls[0]
+	await _chained_move(ch, _cpos(70.0, 19), _cpos(68.6, 19), 30)
+	await _chained_jump("p1_", "right", 42)
+	await _frames(120)
+	_release_all_keys()
+	await _chained_settle(a)
+	_expect(a.global_position.y > 15.0 * 32.0 and ch.lives == Chained.LIVES, "level 2 tower: an ordinary full-power jump at the foot of the tower does not reach the 6-tile ledge (row %.1f)" % (a.global_position.y / 32.0))
+	await _free_chained(ch)
+	await _window("level 2 tower: player 1 hops onto the trampoline strip with 2 / 8 / 15 frames (strip is 5 tiles wide; player 2 anchored)", [2, 8, 15], func(c): return await _try_tower(62.4, 68.7, c, 16))
+	await _window("level 2 tower: player 1 starts 58.5 / 60.5 / 62.4 tiles from the left edge", [58.5, 60.5, 62.4], func(c): return await _try_tower(c, 68.7, 8, 16))
+	await _window("level 2 tower: player 2 (rope helping) hops onto the strip with 6 / 16 / 26 frames", [6, 16, 26], func(c): return await _try_tower(62.4, 68.7, 8, c))
+	await _window("level 2 tower: player 2 waits at column 67.0 / 68.7 / 70.0", [67.0, 68.7, 70.0], func(c): return await _try_tower(62.4, c, 8, 16))
+
+	# --- thang máy: cả hai lên thang ở đáy, lên đỉnh, nhảy sang cao nguyên ---
+	await _window("level 2 lift: player 1 boards with 10 / 17 / 24 frames (player 2: 8)", [10, 17, 24], func(h): return await _try_lift2(83.2, 85.0, h, 8, 0, 14, 0))
+	await _window("level 2 lift: player 2 boards with 7 / 14 / 20 frames (player 1: 12)", [7, 14, 20], func(h): return await _try_lift2(83.2, 85.0, 12, h, 0, 14, 0))
+	await _window("level 2 lift: players start 6 frames apart, either order", [-6, 6], func(o): return await _try_lift2(83.2, 85.0, 12, 8, o, 14, 0))
+	await _window("level 2 lift: both hop off at the top with 14 / 24 / 34 frames", [14, 24, 34], func(e): return await _try_lift2(83.2, 85.0, 12, 8, 0, e, 0))
+	await _window("level 2 lift: ... starting the exit hop 6 frames apart, either order", [-6, 6], func(o): return await _try_lift2(83.2, 85.0, 12, 8, 0, 20, o))
+
+	# --- khe 7 ô trên cao: súng cao su (hai sao nằm trên đường bay); người chơi 2 nhảy từ chỗ lùi xa vừa phải ---
+	ch = await _make_chained(1)
+	var new_beads := await _chained_sling(ch, "level 2 gap", 101, 7, 109)
+	_expect(new_beads >= 2, "level 2 gap: the stars on the flight path of the slingshot are collected (%d new beads)" % new_beads)
+	await _free_chained(ch)
+	await _window("level 2 gap: player 2 charges 30 / 40 / 50 frames (back-off 290 px)", [30, 40, 50], func(f): return await _try_sling(1, 101, 7, 109, 290.0, f, 45))
+	await _window("level 2 gap: player 2 backs off 240 / 280 / 320 px (a stretch window of 80 px, 2.5 tiles)", [240, 280, 320], func(d): return await _try_sling(1, 101, 7, 109, float(d), 50, 45))
+	await _window("level 2 gap: player 1 follows with 12 / 30 / 50 frames", [12, 30, 50], func(f): return await _try_sling(1, 101, 7, 109, 290.0, 50, f))
+
+	# --- bậc thang xuống đích ---
+	ch = await _make_chained(1)
+	a = ch.balls[0]
+	b = ch.balls[1]
+	await _chained_move(ch, _cpos(116.5, 9), _cpos(115.2, 9), 40)
+	var ok := true
+	for step in [[120, 12], [124, 15]]:
+		if ok:
+			ok = await _chained_hop_to(a, "p1_", step[0] + 0.4, step[1], 14)
+		if ok:
+			ok = await _chained_hop_to(b, "p2_", step[0] + 0.4, step[1], 14)
+	await _chained_hop2(14, 14, 60)                        # xuống bậc 3
+	_expect(ok and ch.lives == Chained.LIVES, "level 2 descent: both players hop down the three stairs (a x %.1f, b x %.1f)" % [a.global_position.x / 32.0, b.global_position.x / 32.0])
+	await _chained_hop2(14, 14, 120)                       # xuống sàn cuối, qua lá cờ đích
+	_expect(ch.finished and ch.lives == Chained.LIVES, "level 2 finish: the pair drops onto the last floor and touches the finish flag (finished %s, lives %d)" % [str(ch.finished), ch.lives])
 	await _free_chained(ch)

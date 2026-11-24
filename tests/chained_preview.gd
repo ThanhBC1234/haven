@@ -12,6 +12,8 @@ func _ready() -> void:
 	Game.save_enabled = false                       # không ghi đè file lưu thật
 	await _menu_shot()
 	await _level_shots()
+	await _new_level_shots(1, "level2", [[62.4, 19, 68.7, 19], [83.5, 13, 85.0, 13]])   # tháp lò xo (người chơi 2 neo), ledge cạnh thang máy
+	await _new_level_shots(2, "level3", [[80.0, 19, 78.8, 19], [104.5, 19, 103.4, 19]])  # cửa hầm trần gai, trước thang máy
 	get_tree().quit()
 
 
@@ -26,8 +28,8 @@ func _menu_shot() -> void:
 
 
 ## Dựng cảnh Chained, giới thiệu dài một chút để kịp chụp READY...
-func _start() -> Chained:
-	Game.chained_index = 0
+func _start(index := 0) -> Chained:
+	Game.chained_index = index
 	Game.chained_totals[0] = 0
 	Game.chained_totals[1] = 0
 	var ch: Chained = load("res://scenes/chained.tscn").instantiate()
@@ -127,6 +129,46 @@ func _level_shots() -> void:
 	ch.level.finish()
 	await _frames(80)
 	await _shot("result_panel")
+	ch.queue_free()
+	await _frames(150)
+
+
+## Màn 2 / màn 3: toàn cảnh chia hai nửa (đọc được từng ô), toàn cảnh cả màn, và ảnh lúc chơi (HUD, dây, hạt) ở các chỗ `spots` = [[cột 1, hàng 1, cột 2, hàng 2], ...].
+func _new_level_shots(index: int, prefix: String, spots: Array) -> void:
+	var ch := await _start(index)
+	await _wait_running(ch)
+	await _frames(30)
+	for i in spots.size():                           # ảnh lúc chơi: hai người ở chỗ khó, vài hạt trên dây
+		var s: Array = spots[i]
+		Input.action_press("p2_use")                 # người chơi 2 neo (dây căng cho đẹp ảnh)
+		_place(ch, 0, s[0], s[1])
+		_place(ch, 1, s[2], s[3])
+		await _frames(40)
+		for k in 4:
+			ch.level.collect_star(ch.balls[k % 2])
+			await _frames(6)
+		await _frames(60)
+		await _shot("%s_gameplay%d" % [prefix, i + 1])
+		Input.action_release("p2_use")
+	ch.set_physics_process(false)                    # camera đứng yên để chụp toàn cảnh
+	ch.camera.limit_left = -100000
+	ch.camera.limit_top = -100000
+	ch.camera.limit_right = 100000
+	ch.camera.limit_bottom = 100000
+	ch.hud.hide()
+	ch.rope.hide()
+	for b in ch.balls:
+		b.hide()
+	var z := 1280.0 / ch.level.size.x
+	ch.camera.zoom = Vector2(z, z)
+	ch.camera.global_position = ch.level.size / 2.0
+	await _frames(6)
+	await _shot("%s_overview" % prefix)
+	for half in 2:                                   # hai nửa màn, mỗi nửa rộng 80 ô (mỗi ô 16 pixel trên ảnh)
+		ch.camera.zoom = Vector2(0.5, 0.5)
+		ch.camera.global_position = Vector2(ch.level.size.x * (0.25 + 0.5 * half), ch.level.size.y / 2.0)
+		await _frames(6)
+		await _shot("%s_overview_half%d" % [prefix, half + 1])
 	ch.queue_free()
 	await _frames(150)
 
