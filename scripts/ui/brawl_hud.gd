@@ -15,12 +15,14 @@ const EVENT_ACTIVE_Y := 12.0
 const ROULETTE_TICKS := 18
 const SLOT_SIZE := Vector2(88, 76)
 const SLOT_GAP := 6.0
+const PANEL_KEY_DELAY := 0.6
 
 var win_score := 5
 var vs_bot := false
 var win_panel: PanelContainer
 var rematch_button: Button
 var menu_button: Button
+var panel_keys_ready := false
 var message_label: Label
 var item_ids := ["", ""]
 var _item_ammo := [0, 0]
@@ -56,10 +58,13 @@ func setup(target_score: int, with_bot := false) -> void:
 	message_label.modulate.a = 0.0
 	add_child(message_label)
 
-	_add_hint("P1:  A / D + W     S: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
-	if not vs_bot:
+	if vs_bot:
+		_add_hint("YOU: A / D or ARROWS to aim, W / SPACE / UP to jump, S / DOWN: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
+		_add_hint("Esc: menu", Control.PRESET_BOTTOM_RIGHT, UiTheme.DIM)
+	else:
+		_add_hint("P1:  A / D + W / SPACE     S: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
 		_add_hint("P2:  LEFT / RIGHT + UP     DOWN: use item", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
-	_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
+		_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
 	queue_redraw()
 
 
@@ -191,7 +196,22 @@ func show_win(winner_id: int, final_scores: Array) -> void:
 	menu_button.text = "Menu"
 	menu_button.pressed.connect(menu_pressed.emit)
 	row.add_child(menu_button)
-	rematch_button.grab_focus()
+	_arm_panel_keys([rematch_button, menu_button], rematch_button)
+
+
+func _arm_panel_keys(buttons: Array, first: Button) -> void:
+	panel_keys_ready = false
+	for b: Button in buttons:
+		b.focus_mode = Control.FOCUS_NONE
+	var wait := create_tween()
+	wait.tween_interval(PANEL_KEY_DELAY)
+	wait.tween_callback(func() -> void:
+		if not is_instance_valid(first):
+			return
+		for b: Button in buttons:
+			b.focus_mode = Control.FOCUS_ALL
+		panel_keys_ready = true
+		first.grab_focus())
 
 
 func _draw() -> void:

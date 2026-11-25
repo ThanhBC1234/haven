@@ -16,6 +16,13 @@ var brawl_row: HBoxContainer
 var _demo_ball: Ball
 var _demo_start := Vector2.ZERO
 var _howto: PanelContainer
+var howto_page := 0
+var howto_next: Button
+var howto_back: Button
+var howto_close: Button
+var two_player_hint: Label
+
+const PAGE_TITLES := ["SINGLE PLAYER", "2 PLAYERS"]
 
 const HOW_TO_PLAY := [
 	["MOVE & JUMP", [
@@ -113,8 +120,15 @@ func _ready() -> void:
 	brawl_row.add_child(chained_button)
 	level_grid.get_parent().add_child(brawl_row)
 	level_grid.get_parent().move_child(brawl_row, level_grid.get_index() + 1)
+	two_player_hint = Label.new()
+	two_player_hint.text = "Alone? Try BRAWL VS BOT.  Two players share one keyboard."
+	two_player_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	two_player_hint.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
+	two_player_hint.add_theme_color_override("font_color", UiTheme.DIM)
+	level_grid.get_parent().add_child(two_player_hint)
+	level_grid.get_parent().move_child(two_player_hint, brawl_row.get_index() + 1)
 	level_grid.get_parent().add_child(bank)
-	level_grid.get_parent().move_child(bank, brawl_row.get_index() + 1)
+	level_grid.get_parent().move_child(bank, two_player_hint.get_index() + 1)
 	level_grid.columns = 2
 	level_grid.custom_minimum_size = Vector2(912, 0)
 	level_grid.add_theme_constant_override("h_separation", 12)
@@ -165,6 +179,23 @@ func _build_ground() -> void:
 	level.add_child(_demo_ball)
 
 
+func _two_player_help() -> Array:
+	return [
+		["KEYS", [
+			"P1: A / D + W or SPACE, S = item / anchor.   P2: LEFT / RIGHT + UP, DOWN = item / anchor.",
+			"Hold left / right to tilt and charge, press jump to launch."]],
+		["BOUNCE BRAWL", [
+			"Stomp their head, or knock them into pits and spikes. First to %d wins." % Brawl.WIN_SCORE,
+			"Random events and item boxes keep it wild.",
+			"Playing alone? Pick BRAWL VS BOT."]],
+		["CHAINED", [
+			"You are tied by a rope. Stars on the rope slide to whoever is LOWER.",
+			"At the finish each star counts for whoever is closer to it. Most stars wins.",
+			"Hold S / DOWN to anchor and slingshot your partner. Stomp your partner to steal a star.",
+			"The loser carries the winner on their head next round."]],
+	]
+
+
 func _show_howto() -> void:
 	if _howto:
 		return
@@ -174,10 +205,27 @@ func _show_howto() -> void:
 	_howto.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_howto.grow_vertical = Control.GROW_DIRECTION_BOTH
 	add_child(_howto)
+	_show_howto_page(0)
+
+
+func _show_howto_page(page: int) -> void:
+	if _howto == null:
+		return
+	howto_page = clampi(page, 0, PAGE_TITLES.size() - 1)
+	for old in _howto.get_children():
+		_howto.remove_child(old)
+		old.queue_free()
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 6)
+	box.add_theme_constant_override("separation", 4)
 	_howto.add_child(box)
-	for section in HOW_TO_PLAY:
+	var title_label := Label.new()
+	title_label.text = "%s   (%d / %d)" % [PAGE_TITLES[howto_page], howto_page + 1, PAGE_TITLES.size()]
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_label.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
+	title_label.add_theme_color_override("font_color", UiTheme.CYAN)
+	box.add_child(title_label)
+	var sections: Array = HOW_TO_PLAY if howto_page == 0 else _two_player_help()
+	for section in sections:
 		var head := Label.new()
 		head.text = section[0]
 		head.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
@@ -188,18 +236,34 @@ func _show_howto() -> void:
 			l.text = "  " + line
 			l.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
 			box.add_child(l)
-	var close := Button.new()
-	close.text = "Close"
-	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	close.pressed.connect(_hide_howto)
-	box.add_child(close)
-	close.grab_focus()
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 12)
+	box.add_child(row)
+	howto_back = Button.new()
+	howto_back.text = "Back"
+	howto_back.disabled = howto_page == 0
+	howto_back.pressed.connect(_show_howto_page.bind(howto_page - 1))
+	row.add_child(howto_back)
+	howto_close = Button.new()
+	howto_close.text = "Close"
+	howto_close.pressed.connect(_hide_howto)
+	row.add_child(howto_close)
+	howto_next = Button.new()
+	howto_next.text = "Next"
+	howto_next.disabled = howto_page >= PAGE_TITLES.size() - 1
+	howto_next.pressed.connect(_show_howto_page.bind(howto_page + 1))
+	row.add_child(howto_next)
+	(howto_close if howto_next.disabled else howto_next).grab_focus()
 
 
 func _hide_howto() -> void:
 	if _howto:
 		_howto.queue_free()
 		_howto = null
+		howto_next = null
+		howto_back = null
+		howto_close = null
 		$Center.show()
 		level_grid.get_child(0).grab_focus()
 

@@ -22,9 +22,9 @@ const SWEAT := [
 	"cCc",
 	".C.",
 ]
-const HINT_DELAY := 1.3
+const HINT_DELAY := 0.5
 const KEY_TEXT := {
-	"p1_": ["A / D", "W"],
+	"p1_": ["A / D", "W / SPACE"],
 	"p2_": ["LEFT / RIGHT", "UP"],
 }
 
@@ -49,6 +49,10 @@ var _layer: CanvasLayer
 
 func _ready() -> void:
 	set_process(false)
+
+
+func is_queued() -> bool:
+	return _queued != 0
 
 
 func setup(chained_node: Chained) -> void:

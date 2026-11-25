@@ -16,9 +16,12 @@ const SHOVE_SPEED := 360.0
 const SHOVE_LIFT := 180.0
 const SHOVE_GAP := 1.0
 const SPAWN_CHARS := "OP"
+const SOLO_PREFIX := "solo_"
 const BALL_LAYER := 2
 const LEADER_SCALE := 1.25
 const CROWN_PX := 3.0
+const GOAL_DELAY := 0.9
+const GOAL_SECONDS := 2.2
 
 static var _last_arena := -1
 
@@ -99,6 +102,8 @@ func _ready() -> void:
 		ball.position = spawn_points[i]
 		level.add_child(ball)
 		ball.set_player(i + 1)
+		if vs_bot and i == 0:
+			ball.action_prefix = SOLO_PREFIX
 		ball.set_collide_with_balls(true)
 		ball.hurt.connect(_on_ball_hurt.bind(ball))
 		ball.stomped.connect(_on_stomped.bind(ball))
@@ -141,7 +146,15 @@ func _start_intro() -> void:
 	match_running = true
 	_reset_stall()
 	hud.flash("BOUNCE!", 0.7)
+	var goal := create_tween()
+	goal.tween_interval(GOAL_DELAY)
+	goal.tween_callback(_flash_goal)
 	match_started.emit()
+
+
+func _flash_goal() -> void:
+	if match_running and scores[0] + scores[1] == 0:
+		hud.flash("STOMP THEIR HEAD! FIRST TO %d" % WIN_SCORE, GOAL_SECONDS)
 
 
 func opponent_of(ball: Ball) -> Ball:

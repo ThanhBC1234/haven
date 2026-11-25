@@ -14,6 +14,7 @@ func _ready() -> void:
 		if a.begins_with("--bot-seed="):
 			bot_seed_offset = int(a.trim_prefix("--bot-seed="))
 	Game.save_enabled = false
+	BrawlBot.tick_budget_usec = -1
 	if OS.get_cmdline_user_args().has("--only-items"):
 		await _brawl_item_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
@@ -28,6 +29,12 @@ func _ready() -> void:
 
 	if OS.get_cmdline_user_args().has("--only-chained-levels"):
 		await _chained_levels_23_checks()
+		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
+		get_tree().quit(1 if failures > 0 else 0)
+		return
+
+	if OS.get_cmdline_user_args().has("--only-fixes"):
+		await _review_fix_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
@@ -495,10 +502,19 @@ func _ready() -> void:
 	await _brawl_event_checks()
 	await _brawl_item_checks()
 	await _brawl_bot_checks()
+	await _review_fix_checks()
 	await _chained_checks()
 
 	print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 	get_tree().quit(1 if failures > 0 else 0)
+
+
+func _review_fix_checks() -> void:
+	var rf: Node = load("res://tests/review_fix_checks.gd").new()
+	add_child(rf)
+	await rf.run(self)
+	rf.queue_free()
+	await _frames(2)
 
 
 func _make_level(map: String) -> Level:
@@ -2166,17 +2182,22 @@ func _brawl_bot_checks() -> void:
 	br.kill(a, "pit")
 	_expect(not "P2" in br.hud.message_label.text, "taunts about P1 never say P2 either ('%s')" % br.hud.message_label.text)
 	await _frames(60)
-	var p1_pressed := 0
-	var p2_pressed := 0
+	_expect(a.action_prefix == "solo_" and b.action_prefix == "bot2_", "vs-bot: the human (P1) uses the solo_ keys, the bot's ball uses bot2_ (%s / %s)" % [a.action_prefix, b.action_prefix])
+	var unbound := true
+	for act in ["bot1_left", "bot1_right", "bot1_jump", "bot1_use", "bot2_left", "bot2_right", "bot2_jump", "bot2_use"]:
+		unbound = unbound and InputMap.has_action(act) and InputMap.action_get_events(act).is_empty()
+	_expect(unbound, "the bot's actions (bot1_*, bot2_*) exist but have NO key bound, so no keyboard key can steer the bot's ball")
+	var human_pressed := 0
+	var bot_pressed := 0
 	var heard_launch := [0]
 	b.launched.connect(func() -> void: heard_launch[0] += 1)
 	for i in 240:
 		await _frames(1)
-		if _any_pressed("p1_"):
-			p1_pressed += 1
-		if _any_pressed("p2_"):
-			p2_pressed += 1
-	_expect(p1_pressed == 0 and p2_pressed > 0, "the bot presses only player 2's actions, never player 1's (p1 frames %d, p2 frames %d)" % [p1_pressed, p2_pressed])
+		if _any_pressed("solo_") or _any_pressed("p1_") or _any_pressed("p2_"):
+			human_pressed += 1
+		if _any_pressed("bot2_"):
+			bot_pressed += 1
+	_expect(human_pressed == 0 and bot_pressed > 0, "the bot presses only its own actions, never the human's (human frames %d, bot frames %d)" % [human_pressed, bot_pressed])
 	_expect(heard_launch[0] >= 1 and bot.hops >= 1, "the bot's real key presses make its ball jump (%d launches)" % heard_launch[0])
 	var waited := 0
 	while bot.held_actions().is_empty() and waited < 600:
@@ -2186,7 +2207,7 @@ func _brawl_bot_checks() -> void:
 	br.scores[1] = Brawl.WIN_SCORE - 1
 	br.kill(a, "pit")
 	await _frames(2)
-	_expect(not br.match_running and bot.held_actions().is_empty() and not _any_pressed("p2_") and bot.phase == "idle", "all the bot's keys are released when the match ends")
+	_expect(not br.match_running and bot.held_actions().is_empty() and not _any_pressed("bot2_") and bot.phase == "idle", "all the bot's keys are released when the match ends")
 	await _free_brawl(br)
 
 	br = await _bot_br(1, 102)
@@ -2195,9 +2216,9 @@ func _brawl_bot_checks() -> void:
 	while bot.held_actions().is_empty() and waited < 600:
 		await _frames(1)
 		waited += 1
-	_expect(_any_pressed("p2_"), "the bot holds a real p2 action (Input sees it)")
+	_expect(_any_pressed("bot2_") and not _any_pressed("p2_"), "the bot holds a real bot2 action (Input sees it) and p2's arrow-key actions stay untouched")
 	bot.free()
-	_expect(not _any_pressed("p2_"), "all keys are released when the bot node is freed")
+	_expect(not _any_pressed("bot2_"), "all keys are released when the bot node is freed")
 	await _free_brawl(br)
 
 	br = await _bot_br(1, 103)
@@ -2208,7 +2229,7 @@ func _brawl_bot_checks() -> void:
 		waited += 1
 	br.kill(br.balls[1], "pit")
 	await _frames(2)
-	_expect(bot.held_actions().is_empty() and not _any_pressed("p2_"), "the bot lets go of every key when its ball dies")
+	_expect(bot.held_actions().is_empty() and not _any_pressed("bot2_"), "the bot lets go of every key when its ball dies")
 	await _free_brawl(br)
 
 	br = await _bot_br(0, 104)
@@ -2758,7 +2779,7 @@ func _chained_mode_checks() -> void:
 	_expect(ch.match_running and not a.dead and not b.dead and started[0] == 1, "chained: after the intro the players can move and level_started fires once")
 	await _frames(45)
 	_expect(a.on_ground and b.on_ground, "chained: both balls stand on the ground at the start")
-	_expect(ch.hud.message_label.text == "GO!" or ch.hud.message_label.text == "READY...", "chained: the HUD says READY... / GO!")
+	_expect(ch.hud.message_label.text == "GO!" or ch.hud.message_label.text == "READY..." or ch.hud.message_label.text == "STARS SLIDE TO THE LOWER PLAYER!", "chained: the HUD says READY... / GO! (then the level-1 goal line)")
 
 	_expect(is_equal_approx(ch.zoom_for_separation(0.0), 1.0) and is_equal_approx(ch.zoom_for_separation(ch.rope.rest_length), 1.0) and is_equal_approx(ch.zoom_for_separation(ch.rope.max_length), Chained.MIN_ZOOM) and ch.zoom_for_separation((ch.rope.rest_length + ch.rope.max_length) / 2.0) < 0.95, "chained camera: zoom is 1.0 up to rest_length and falls to %.2f at max_length" % Chained.MIN_ZOOM)
 	var mid := (a.global_position + b.global_position) / 2.0

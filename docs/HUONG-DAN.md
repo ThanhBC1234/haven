@@ -38,8 +38,10 @@ Mỗi trận bốc ngẫu nhiên một đấu trường trong `scripts/brawl_dat
 |---|---|---|
 | Giữ để nghiêng trái, tích lực | A | ← |
 | Giữ để nghiêng phải, tích lực | D | → |
-| Nhảy (theo hướng và lực đang tích) | W | ↑ |
+| Nhảy (theo hướng và lực đang tích) | W hoặc Space | ↑ |
 | Dùng vật phẩm | S | ↓ |
+
+Đấu với máy (BRAWL VS BOT): người chơi dùng được cả A / D lẫn phím mũi tên để nghiêng, W / Space / ↑ để nhảy, S / ↓ để dùng vật phẩm. Máy điều khiển bằng bộ phím riêng không gắn với bàn phím nên bấm mũi tên không ảnh hưởng tới máy.
 
 - **Cách ghi điểm:** dẫm đầu đối thủ (stomp), đối thủ rơi xuống vực, hoặc đối thủ chạm gai. Mỗi lần được 1 điểm.
 - **Thắng:** ai đạt **5 điểm** (`WIN_SCORE` trong `scripts/brawl.gd`) trước thì thắng.
@@ -114,6 +116,104 @@ Mở `scripts/brawl_data.gd`, chép một khối `{"name": ..., "map": r"""...""
 - `tests/brawl_soak.tscn`: hai bot đấu nhau trọn trận, in kết quả và dòng `ANOMALY` nếu có lỗi lạ. Chạy:
   `godot --headless --fixed-fps 60 --path . res://tests/brawl_soak.tscn`
 - `tests/brawl_preview.tscn` (chạy có cửa sổ): chụp ảnh các đấu trường, gai, sự kiện, vật phẩm và vương miện.
+
+## Chế độ Chained (2 người buộc dây)
+
+Hai người chơi trên một bàn phím, bị trói bằng một sợi dây thun. Ở menu bấm **CHAINED 2P** là vào thẳng màn 1.
+Có 3 màn, đi lần lượt bằng nút **Next level** ở bảng kết quả: **Tied Together**, **Up and Over**, **Chain Reaction**.
+Retry chơi lại màn đang có, Menu về menu. Esc thoát về menu bất cứ lúc nào.
+
+| Việc | Người chơi 1 (bên trái, màu đỏ) | Người chơi 2 (bên phải, màu xanh dương) |
+|---|---|---|
+| Giữ để nghiêng trái, tích lực | A | ← |
+| Giữ để nghiêng phải, tích lực | D | → |
+| Nhảy (theo hướng và lực đang tích) | W hoặc Space | ↑ |
+| Neo (giữ khi đứng trên đất) | S | ↓ |
+
+### Dây thun
+
+- Đơn vị: 1 ô = 32 px. Dây chùng dưới **5 ô** (`rest_length`) thì không có lực. Căng quá 5 ô thì kéo hai người lại gần nhau như lò xo.
+  Quá **10 ô** (`max_length`) thì bị kéo rất mạnh, hai người không thể xa hơn nữa.
+- **Neo:** giữ S / ↓ khi đang đứng trên đất thì bóng đó đứng yên như cọc: nặng hơn, ma sát cao, và dây chỉ kéo được 10% lực.
+  Nhờ vậy người đồng đội có thể lơ lửng trên hố mà không bị kéo xuống. Thả phím là hết neo. **Nhảy là thả neo**, không neo lại cho tới khi chạm đất.
+  Đang neo mà bị nảy lên khi vừa chạm đất thì vẫn giữ neo tối đa 0,9 giây trên không. Người đang neo có biểu tượng neo trên đầu.
+- **Ná cao su:** một người neo ở mép hố, người kia lùi ra sau cho dây căng rồi cũng giữ neo, sau đó bấm nhảy về phía người neo.
+  Dây hất người nhảy vọt qua đầu người neo, tới khoảng 9 ô bên kia mép. Đây là cách qua khe rộng mà nhảy thường không tới.
+
+### Sao trên dây
+
+- Sao nhặt được không vào túi ai mà được xâu lên giữa dây.
+- Sao **trượt về phía người đứng thấp hơn**. Hai người chênh độ cao dưới 6 px thì sao đứng yên.
+- **Cuối màn** mỗi sao tính cho người gần nó hơn. Sao đúng giữa dây không tính cho ai. Ai có nhiều sao hơn thắng màn, hoà thì không ai thắng.
+- **Cướp sao:** dẫm lên đầu đồng đội thì giật 1 sao: sao gần đầu người bị dẫm nhất nhảy sang đầu người dẫm, đứng yên 2,5 giây.
+  Không cướp được khi người bị dẫm đang miễn sát thương (vừa hồi sinh).
+- **Chết:** một người rơi xuống vực (thấp hơn đáy màn 160 px) hoặc chạm gai, quái thì **cả hai** cùng chết:
+  - mất 1 mạng chung, cả hai về **cờ lưu** gần nhất (lúc đầu là chỗ xuất phát), hồi sinh sau 1 giây và miễn sát thương 1,5 giây;
+  - một nửa số sao (làm tròn lên) ở phía người chết rơi ra đất quanh cờ lưu, hai người tranh nhau nhặt lại.
+- **Mạng chung:** mỗi lần vào màn có **5 mạng** (`LIVES`). Nhặt tim thì +1 mạng, tối đa 5. Hết mạng thì màn được chơi lại từ đầu.
+- **Cờ lưu K:** một người chạm cờ thì từ đó cả hai hồi sinh ở cờ.
+- **Về đích:** một người chạm cờ đích **F** khi cả hai còn sống thì màn kết thúc và hiện bảng kết quả.
+
+### Sự kiện ngẫu nhiên
+
+Sự kiện đầu tiên bốc sau **12 giây** kể từ lúc màn bắt đầu chơi, sau đó **cứ 20 giây một lần**. Trước mỗi sự kiện có màn quay roulette 2 giây.
+Không lặp lại sự kiện vừa rồi, và không bốc khi có người đang chết hoặc chờ hồi sinh.
+
+| Sự kiện | Tác dụng | Thời gian |
+|---|---|---|
+| BODY SWAP | Hai người đổi phím: bóng người chơi 1 nghe phím của người chơi 2 và ngược lại | 10 giây |
+| ONE BRAIN | Một người điều khiển cả hai bóng. Đổi sang người kia sau 5 giây (nhãn P1 / P2 trên đầu bóng cho biết ai là bộ não) | 10 giây |
+| SHORT LEASH | Dây ngắn lại: chùng 2 ô, căng hết cỡ ở 3 ô | 10 giây |
+| BUNGEE | Dây dài và mềm, nhún lâu hơn: chùng 6 ô, căng hết cỡ ở 18 ô | 10 giây |
+| GIANT & TINY | Một người to (1,6 lần), một người nhỏ (0,6 lần) | 10 giây |
+| FREEDOM | Dây đứt, các sao trên dây rơi xuống đất. Sao nhặt lúc đó được cất lại và xâu về đầu dây của người nhặt khi nối dây. Hết giờ thì nối lại, chờ tối đa 3 giây | 10 giây |
+| EARTHQUAKE | Các sao trên dây trôi lung tung và camera rung | 8 giây |
+
+Hết giờ thì dây trượt về số đo cũ trong 1 giây, không giật.
+
+### Cõng nhau (hình phạt cuối màn)
+
+Người **thua** màn trước **cõng** người thắng trong **10 giây đầu** của vòng kế (màn kế tiếp hoặc khi chơi lại). Hoà thì không phạt.
+
+- Người thắng ngồi trên đầu người thua. **Người dưới** (người thua) chỉ nghiêng và tích lực bằng A / D (hoặc ← / →), phím nhảy của họ bị khoá.
+- **Người trên** giữ phím nhảy (W / ↑): bấm nhảy thì người dưới nhảy với lực đang tích.
+- Hết 10 giây thì người trên nhảy xuống một bên an toàn hơn. Có người chết hoặc về đích thì cõng kết thúc ngay.
+
+### Chỉnh ở đâu
+
+| Chỉnh gì | Ở đâu |
+|---|---|
+| Số mạng (`LIVES`), hồi sinh (`respawn_delay`, `RESPAWN_INVULN`), thời gian READY (`intro_seconds`), rơi vực (`FALL_MARGIN`) | `scripts/chained.gd` |
+| Dây: chùng (`rest_length`, 160 = 5 ô), tối đa (`max_length`, 320 = 10 ô), độ cứng (`stiffness`), giảm chấn (`damping`), lực còn lại khi neo (`anchor_force_scale`, 0,1) | `scripts/rope.gd` |
+| Khoảng cách và thời điểm sự kiện (`interval`, `first_delay`, `roulette_seconds`), thời gian từng sự kiện (`body_swap_seconds`, `freedom_seconds`...), số đo dây của SHORT LEASH và BUNGEE | `scripts/chained_events.gd` |
+| Thời gian cõng (`DEFAULT_SECONDS`) | `scripts/chained_piggyback.gd` |
+| Các màn (bản đồ chữ) | `scripts/chained_data.gd` |
+| Phím của người chơi 1 / 2 (`p1_*`, `p2_*`) | `scripts/autoload/game.gd` |
+
+### Thêm màn Chained mới
+
+Mở `scripts/chained_data.gd`, chép một khối `{"name": ..., "map": r"""..."""}` vào `LEVELS` rồi sửa. Ký tự giống `scripts/level_data.gd` (`#` đất, `^` gai, `v` gai treo, `e` quái, `K` cờ lưu, `F` đích, `*` sao, `+` tim, `T` lò xo), thêm hai ký tự riêng:
+
+- `O` = chỗ xuất phát của người chơi 1, `P` = của người chơi 2 (đặt cách `O` vài ô).
+
+Quy tắc (có bài test kiểm tra):
+
+- Cột đầu và cột cuối là tường `#` từ trên xuống dưới. Có đúng một `O`, một `P`, một `F`, ít nhất 10 sao và 2 - 3 cờ lưu `K`.
+- Mọi hàng dài bằng nhau, cao khoảng 18 - 24 ô, rộng khoảng 100 - 170 ô.
+- Dây căng hết cỡ ở 10 ô nên hai người không xa nhau quá khoảng 10 ô. Nhảy thường khi đang bị trói thì người nhảy bị dây giật lại và người kia bị kéo theo xuống khe,
+  nên khe phải qua được bằng ná cao su (khe rộng 7 ô là cỡ vừa).
+- Đừng vẽ hố hẹp có thành đứng cao hơn 2 ô mà không có bậc thang, vì bóng đập vào thành sẽ mất đà và không leo ra được.
+- Mỗi đoạn khó phải qua được trong khoảng 12 khung giữ phím (0,2 giây) trở lên, vì người chơi thật không bấm đúng từng khung.
+  Bài test `_window` trong `tests/smoke.gd` kiểm tra các cửa sổ này. Đừng rút hẹp mà không chạy lại bài test.
+
+### Kiểm tra
+
+- `tests/chained_events_test.tscn`: kiểm tra sự kiện ngẫu nhiên. Chạy:
+  `godot --headless --fixed-fps 60 --path . res://tests/chained_events_test.tscn`
+- `tests/chained_piggyback_test.tscn`: kiểm tra hình phạt cõng. Chạy:
+  `godot --headless --fixed-fps 60 --path . res://tests/chained_piggyback_test.tscn`
+- `tests/chained_preview.tscn` (chạy có cửa sổ, `-- --shots=<thư mục>`): chụp ảnh menu, đầu màn, dây căng, neo, bảng kết quả và toàn cảnh màn.
+- Muốn chơi thử không có sự kiện ngẫu nhiên: chạy với `-- --no-events`.
 
 ## Vật phẩm, súng, boss
 
@@ -272,6 +372,12 @@ Mỗi đồ vật đang tự vẽ hình tạm bằng code. Để thay bằng PNG
 | `scripts/brawl_bot.gd` | Máy chơi Brawl (BRAWL VS BOT) |
 | `scripts/brawl_data.gd` | Đấu trường và câu châm chọc của Brawl |
 | `scripts/ui/brawl_hud.gd` | Giao diện Brawl: điểm, dòng thông báo, bảng thắng |
+| `scripts/chained.gd` | Chế độ Chained: dựng màn, hai người, mạng chung, chết và hồi sinh, cướp sao, về đích |
+| `scripts/rope.gd` | Chained: dây thun, các sao xâu trên dây, neo, súng cao su |
+| `scripts/chained_events.gd` | Chained: sự kiện ngẫu nhiên (BODY SWAP, FREEDOM...) |
+| `scripts/chained_piggyback.gd` | Chained: hình phạt cõng cuối màn |
+| `scripts/chained_data.gd` | Chained: các màn (bản đồ chữ) |
+| `scripts/ui/chained_hud.gd` | Giao diện Chained: sao từng người, mạng, thông báo, bảng kết quả |
 | `scripts/play.gd` | Camera, mạng, sao, hồi sinh, qua màn |
 | `scripts/objects/` | Quái, thùng, gai, nút, cửa, bệ, bập bênh, sao/cờ/đích/lò xo |
 | `scripts/ui/` | Menu, HUD, giao diện |
@@ -283,4 +389,4 @@ Mỗi đồ vật đang tự vẽ hình tạm bằng code. Để thay bằng PNG
 godot --headless --fixed-fps 60 --path . res://tests/smoke.tscn
 ```
 
-Chạy hơn 380 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận, hồi sinh, Bounce Brawl). `tests/soak.tscn` cho một bot chơi ngẫu nhiên chế độ vô tận và cả 3 màn để dò lỗi lúc chạy (dòng `ANOMALY` là chỗ cần xem). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.
+Chạy hơn 600 kiểm tra (cơ chế, quy tắc đoạn vô tận, chế độ vô tận, hồi sinh, Bounce Brawl, Chained). Hai bài test riêng của Chained là `tests/chained_events_test.tscn` và `tests/chained_piggyback_test.tscn`. `tests/soak.tscn` cho một bot chơi ngẫu nhiên chế độ vô tận và cả 3 màn để dò lỗi lúc chạy (dòng `ANOMALY` là chỗ cần xem). `tests/segments_preview.tscn` (chạy có cửa sổ) chụp toàn cảnh từng đoạn. `tests/measure.tscn` đo lại tầm nhảy sau khi chỉnh số; `tests/ball_preview.tscn` (chạy có cửa sổ) chụp ảnh phóng to nhân vật.

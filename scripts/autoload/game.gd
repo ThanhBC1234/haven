@@ -16,12 +16,18 @@ const KEYS := {
 	"back": [KEY_ESCAPE],
 	"p1_left": [KEY_A],
 	"p1_right": [KEY_D],
-	"p1_jump": [KEY_W],
+	"p1_jump": [KEY_W, KEY_SPACE],
 	"p1_use": [KEY_S],
 	"p2_left": [KEY_LEFT],
 	"p2_right": [KEY_RIGHT],
 	"p2_jump": [KEY_UP],
 	"p2_use": [KEY_DOWN],
+	"solo_left": [KEY_A, KEY_LEFT],
+	"solo_right": [KEY_D, KEY_RIGHT],
+	"solo_jump": [KEY_W, KEY_SPACE, KEY_UP],
+	"solo_use": [KEY_S, KEY_DOWN, KEY_F, KEY_J],
+	"bot1_left": [], "bot1_right": [], "bot1_jump": [], "bot1_use": [],
+	"bot2_left": [], "bot2_right": [], "bot2_jump": [], "bot2_use": [],
 }
 
 var level_index := 0

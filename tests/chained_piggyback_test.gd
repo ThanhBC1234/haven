@@ -186,13 +186,16 @@ func _round_start_checks() -> void:
 		_expect(ch.piggyback.piggyback_rider == rider and ch.piggyback.piggyback_carrier == carrier, "round start (P%d rides): P%d sits on P%d" % [who, who, 3 - who])
 		_expect(rider.carried and carrier.jump_locked and not rider.jump_locked and not carrier.carried, "round start (P%d rides): the rider is carried and the carrier's jump key is locked" % who)
 		_expect(ch.piggyback.seconds_left > 9.8 and ch.piggyback.seconds_left <= 10.0, "round start (P%d rides): 10 seconds on the clock (%.2f)" % [who, ch.piggyback.seconds_left])
+		_expect(ch.hud.message_label.text != "GO!" and ch.hud.message_label.modulate.a < 0.01, "round start (P%d rides): no GO! flash and no fading READY... under the piggyback banner ('%s', alpha %.2f)" % [who, ch.hud.message_label.text, ch.hud.message_label.modulate.a])
 		await _frames(60)
 		_expect(ch.piggyback.piggyback_active and ch.piggyback.seconds_left < 9.1 and ch.piggyback.seconds_left > 8.8, "round start (P%d rides): the clock runs (%.2f after 1 s)" % [who, ch.piggyback.seconds_left])
+		_expect(ch.hud.message_label.text != "GO!" and not "STARS" in ch.hud.message_label.text and ch.hud.message_label.modulate.a < 0.01, "round start (P%d rides): neither GO! nor the level-1 goal line appears while the banner is up ('%s', alpha %.2f)" % [who, ch.hud.message_label.text, ch.hud.message_label.modulate.a])
 		await _free_chained(ch)
 		_expect(counts["ended"] == 1, "round start (P%d rides): leaving the scene mid-piggyback ends it cleanly" % who)
 	Game.chained_piggyback = 0
 	var ch2 := await _make_chained()
 	_expect(not ch2.piggyback.piggyback_active and not ch2.balls[0].carried and not ch2.balls[1].carried and not ch2.balls[0].jump_locked and not ch2.balls[1].jump_locked, "round start: no penalty, no piggyback")
+	_expect(ch2.hud.message_label.text == "GO!", "round start: without a penalty the usual GO! flash still shows ('%s')" % ch2.hud.message_label.text)
 	await _free_chained(ch2)
 
 

@@ -18,6 +18,7 @@ const ICE_SLIDE := 0.8
 const TRAP_SIZE := Vector2(40.0, 30.0)
 const GRAPH_CHARGES := [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0]
 const GRAPH_NODES_PER_FRAME := 1
+const TICK_BUDGET_USEC := 800
 const SLIDE_DECEL := 1260.0
 const BOUNCE := 0.55
 const FRICTION_CUT := 1.4
@@ -32,6 +33,8 @@ const HIT_LAND := 1
 const HIT_BUMP := 2
 const HAZARD_PAD := 12.0
 const HIGH_WEIGHT := 1.0
+
+static var tick_budget_usec := TICK_BUDGET_USEC
 
 @export var skill := 0.6
 
@@ -55,6 +58,8 @@ var predicted_end := Vector2.ZERO
 var _down := {}
 var _pulses := {}
 var _solid := PackedByteArray()
+var _solid_sum := PackedInt32Array()
+var _haz_sum := PackedInt32Array()
 var _cols := 0
 var _rows := 0
 var _nodes: Array[Vector2] = []
@@ -62,6 +67,14 @@ var _node_at := PackedInt32Array()
 var _redges: Array = []
 var _graph_todo: Array[int] = []
 var _graph_ctx := {}
+var _graph_node := -1
+var _graph_cands: Array = []
+var _graph_job: EvalJob = null
+var _graph_next := 0
+var last_tick_usec := 0
+var _deadline := -1
+var _graph_ticks := 0
+var _base_radius := 15.0
 var _graph_done := false
 var _graph_usable := false
 var _gdist := PackedInt32Array()
@@ -76,6 +89,22 @@ var _history: Array = []
 var _think_cd := 0.3
 var _queue: Array = []
 var _results: Array = []
+var _think_job: EvalJob = null
+var _think_cand: Array = []
+var _ch_job: EvalJob = null
+var _lc_job: EvalJob = null
+var _ch_ranked: Array = []
+var _ch_i := 0
+var _ch_checks := 0
+var _ch_amounts: Array = []
+var _ch_k := 0
+var _ch_best: Dictionary = {}
+var _ch_strict := true
+var _ch_sigma := 0.0
+var _lc_dir := 0
+var _lc_amounts: Array = []
+var _lc_k := 0
+var _lc_safe := true
 var _ctx := {}
 var _think_frames := 0
 var _delay_frames := 0
@@ -107,6 +136,7 @@ func _ready() -> void:
 		push_error("BrawlBot must be a child of Brawl")
 		return
 	ball = brawl.balls[player_index]
+	ball.action_prefix = "bot%d_" % (player_index + 1)
 	foe = brawl.opponent_of(ball)
 	_gravity = float(ProjectSettings.get_setting("physics/2d/default_gravity", 1400.0))
 	_damp = float(ProjectSettings.get_setting("physics/2d/default_linear_damp", 0.1))
@@ -165,13 +195,31 @@ func _stop_all() -> void:
 	release_all()
 	phase = "idle"
 	_queue.clear()
+	_think_job = null
+	_ch_job = null
+	_lc_job = null
 	_think_cd = 0.25
 
 
 func _physics_process(delta: float) -> void:
 	if brawl == null or ball == null:
 		return
-	_graph_step()
+	var t0 := Time.get_ticks_usec()
+	_deadline = t0 + tick_budget_usec if tick_budget_usec >= 0 else -1
+	_play(delta)
+	if not _graph_done:
+		var used := Time.get_ticks_usec() - t0
+		var left := -1
+		if tick_budget_usec >= 0:
+			if brawl.match_running:
+				left = clampi(tick_budget_usec - used, 0, tick_budget_usec / 2)
+			else:
+				left = maxi(0, tick_budget_usec * 2 - used)
+		_graph_step(left)
+	last_tick_usec = Time.get_ticks_usec() - t0
+
+
+func _play(delta: float) -> void:
 	for action in _pulses.keys():
 		_pulses[action] -= 1
 		if _pulses[action] <= 0:
@@ -196,6 +244,12 @@ func _physics_process(delta: float) -> void:
 		"think":
 			_think_step()
 			_try_items(delta)
+		"choose":
+			_think_frames += 1
+			_choose_step()
+			_try_items(delta)
+		"check":
+			_launch_step()
 		"prep":
 			_delay_frames -= 1
 			if _delay_frames <= 0:
@@ -274,6 +328,24 @@ func _build_map() -> void:
 			var ch := level.char_at(r, c)
 			_solid[r * _cols + c] = 1 if ch == "#" else 0
 			_haz[r * _cols + c] = {"^": 1, "T": 2, "v": 3}.get(ch, 0)
+	_solid_sum = _prefix_sums(_solid)
+	_haz_sum = _prefix_sums(_haz)
+
+
+func _prefix_sums(grid: PackedByteArray) -> PackedInt32Array:
+	var w := _cols + 1
+	var sums := PackedInt32Array()
+	sums.resize(w * (_rows + 1))
+	for r in _rows:
+		for c in _cols:
+			var cell := 1 if grid[r * _cols + c] != 0 else 0
+			sums[(r + 1) * w + c + 1] = cell + sums[r * w + c + 1] + sums[(r + 1) * w + c] - sums[r * w + c]
+	return sums
+
+
+func _count_in(sums: PackedInt32Array, r0: int, r1: int, c0: int, c1: int) -> int:
+	var w := _cols + 1
+	return sums[(r1 + 1) * w + c1 + 1] - sums[r0 * w + c1 + 1] - sums[(r1 + 1) * w + c0] + sums[r0 * w + c0]
 
 
 func _is_solid(r: int, c: int) -> bool:
@@ -289,6 +361,11 @@ func _hit_solid(p: Vector2, rad: float) -> bool:
 	var c1 := floori((p.x + rad) / TILE)
 	var r0 := floori((p.y - rad) / TILE)
 	var r1 := floori((p.y + rad) / TILE)
+	if c0 >= 0 and c1 < _cols:
+		var rr0 := maxi(r0, 0)
+		var rr1 := mini(r1, _rows - 1)
+		if rr0 > rr1 or _count_in(_solid_sum, rr0, rr1, c0, c1) == 0:
+			return false
 	for r in range(r0, r1 + 1):
 		for c in range(c0, c1 + 1):
 			if not _is_solid(r, c):
@@ -310,22 +387,23 @@ func _danger_at(p: Vector2, rad: float) -> int:
 	var mask := 0
 	if p.y > FALL_Y:
 		return 1
-	for r in range(floori((p.y - rad) / TILE), floori((p.y + rad) / TILE) + 1):
-		if r < 0 or r >= _rows:
-			continue
-		for c in range(floori((p.x - rad) / TILE), floori((p.x + rad) / TILE) + 1):
-			if c < 0 or c >= _cols:
-				continue
-			var kind := _haz[r * _cols + c]
-			if kind == 0:
-				continue
-			var x := c * TILE
-			var y := r * TILE
-			if kind == 2:
-				if _circle_hits(p, rad, Rect2(x, y, TILE, TILE)):
-					mask |= 2
-			elif _circle_hits(p, rad + SPIKE_PAD, Rect2(x + (TILE - SPIKE_W) / 2.0, y + TILE - SPIKE_H if kind == 1 else y, SPIKE_W, SPIKE_H)):
-				return 1
+	var tr0 := maxi(floori((p.y - rad) / TILE), 0)
+	var tr1 := mini(floori((p.y + rad) / TILE), _rows - 1)
+	var tc0 := maxi(floori((p.x - rad) / TILE), 0)
+	var tc1 := mini(floori((p.x + rad) / TILE), _cols - 1)
+	if tr0 <= tr1 and tc0 <= tc1 and _count_in(_haz_sum, tr0, tr1, tc0, tc1) > 0:
+		for r in range(tr0, tr1 + 1):
+			for c in range(tc0, tc1 + 1):
+				var kind := _haz[r * _cols + c]
+				if kind == 0:
+					continue
+				var x := c * TILE
+				var y := r * TILE
+				if kind == 2:
+					if _circle_hits(p, rad, Rect2(x, y, TILE, TILE)):
+						mask |= 2
+				elif _circle_hits(p, rad + SPIKE_PAD, Rect2(x + (TILE - SPIKE_W) / 2.0, y + TILE - SPIKE_H if kind == 1 else y, SPIKE_W, SPIKE_H)):
+					return 1
 	for s in _dyn_spikes:
 		if _circle_hits(p, rad + SPIKE_PAD, s):
 			return 1
@@ -355,6 +433,7 @@ func _build_nodes() -> void:
 	_node_at.resize(_cols * _rows)
 	_node_at.fill(-1)
 	var base_radius := ball.radius / ball.size_factor
+	_base_radius = base_radius
 	for r in range(1, _rows):
 		for c in range(1, _cols - 1):
 			if not _is_solid(r, c) or _is_solid(r - 1, c) or _haz[(r - 1) * _cols + c] != 0:
@@ -365,39 +444,64 @@ func _build_nodes() -> void:
 		_redges.append([])
 		_graph_todo.append(i)
 	_graph_ctx = {"me_pos": Vector2.ZERO, "me_vel": Vector2.ZERO, "g_me": _gravity, "foe_pos": Vector2.ZERO, "foe_vel": Vector2.ZERO,
-		"g_foe": _gravity, "foe_on": false, "foe_invuln": 0.0, "my_invuln": 0.0, "ice": false, "box_pos": Vector2.INF, "t_contact": 0.0, "margin": 0.0}
+		"g_foe": _gravity, "foe_on": false, "foe_invuln": 0.0, "my_invuln": 0.0, "ice": false, "box_pos": Vector2.INF, "t_contact": 0.0, "margin": 0.0,
+		"rad": base_radius, "plain": true}
 
 
-func _graph_step() -> void:
-	if _graph_todo.is_empty():
-		_graph_done = true
+func _graph_step(budget_usec: int) -> void:
+	if _graph_done or budget_usec == 0:
 		return
-	for n in GRAPH_NODES_PER_FRAME:
-		if _graph_todo.is_empty():
-			break
-		_expand_node(_graph_todo.pop_front())
-	if _graph_todo.is_empty():
-		_graph_done = true
+	_graph_ticks += 1
+	if budget_usec < 0:
+		for n in GRAPH_NODES_PER_FRAME:
+			if _graph_todo.is_empty() and _graph_node < 0:
+				break
+			_graph_run_one(-1)
+			while _graph_node >= 0:
+				_graph_run_one(-1)
+	else:
+		var until := Time.get_ticks_usec() + budget_usec
+		while _graph_node >= 0 or not _graph_todo.is_empty():
+			if not _graph_run_one(until) or Time.get_ticks_usec() >= until:
+				break
+	_graph_done = _graph_node < 0 and _graph_job == null and _graph_todo.is_empty()
 
 
-func _expand_node(i: int) -> void:
+func _graph_begin_node(i: int) -> void:
+	_graph_node = i
 	_graph_ctx["me_pos"] = _nodes[i]
-	var cands: Array = [[0, 0.5]]
+	_graph_cands = [[0, 0.5]]
 	for dir in [-1, 1]:
 		for amount in GRAPH_CHARGES:
-			cands.append([dir, amount])
-	for cand in cands:
-		var res := _evaluate(cand[0], cand[1], false, _graph_ctx)
-		if res["dead"] or not res["landed"] or res["spring"]:
-			continue
-		var j := _node_index_at(res["end"])
-		if j >= 0 and j != i and not _redges[j].has(i):
-			_redges[j].append(i)
+			_graph_cands.append([dir, amount])
+	_graph_next = 0
 
 
-func _node_index_at(p: Vector2) -> int:
+func _graph_run_one(until_usec: int) -> bool:
+	if _graph_node < 0:
+		_graph_begin_node(_graph_todo.pop_front())
+	if _graph_job == null:
+		var cand: Array = _graph_cands[_graph_next]
+		_graph_job = _eval_begin(cand[0], cand[1], false, _graph_ctx, 0.0, true)
+	if not _eval_run(_graph_job, until_usec):
+		return false
+	var res := _graph_job.res
+	_graph_job = null
+	var i := _graph_node
+	_graph_next += 1
+	if _graph_next >= _graph_cands.size():
+		_graph_node = -1
+	if res["dead"] or not res["landed"] or res["spring"]:
+		return true
+	var j := _node_index_at(res["end"], _base_radius)
+	if j >= 0 and j != i and not _redges[j].has(i):
+		_redges[j].append(i)
+	return true
+
+
+func _node_index_at(p: Vector2, rad := -1.0) -> int:
 	var c := floori(p.x / TILE)
-	var r := floori((p.y + ball.radius + 2.0) / TILE)
+	var r := floori((p.y + (rad if rad >= 0.0 else ball.radius) + 2.0) / TILE)
 	if c < 0 or c >= _cols or r < 0 or r >= _rows:
 		return -1
 	return _node_at[r * _cols + c]
@@ -529,11 +633,38 @@ func _advance(b: SimBody, g: float) -> int:
 
 
 func _evaluate(dir: int, charge: float, immediate := false, ctx := {}) -> Dictionary:
+	var job := _eval_begin(dir, charge, immediate, ctx, _extra_skin)
+	_eval_run(job, -1)
+	return job.res
+
+
+class EvalJob extends RefCounted:
+	var dir := 0
+	var charge := 0.0
+	var c := {}
+	var skin := 0.0
+	var isolate := false
+	var me: SimBody
+	var op: SimBody
+	var wait := false
+	var launch_at := 0.0
+	var res := {}
+	var launched := false
+	var landed := false
+	var land_t := 0.0
+	var vx_land := 0.0
+	var t := 0.0
+	var min_gap := 9999.0
+	var step := 0
+	var finished := false
+
+
+func _eval_begin(dir: int, charge: float, immediate := false, ctx := {}, skin := 0.0, isolate := false) -> EvalJob:
 	var c: Dictionary = ctx if not ctx.is_empty() else _ctx
 	var me := SimBody.new()
 	me.pos = c["me_pos"]
 	me.vel = c["me_vel"]
-	me.rad = ball.radius
+	me.rad = c.get("rad", ball.radius)
 	var op := SimBody.new()
 	op.pos = c["foe_pos"]
 	op.vel = c["foe_vel"]
@@ -546,18 +677,64 @@ func _evaluate(dir: int, charge: float, immediate := false, ctx := {}) -> Dictio
 	var launch_at := 0.0 if wait else maxf(hold_s + FRAME, float(c["t_contact"]) - LAND_LEAD)
 	var res := {"dead": false, "stomp_opp": -1.0, "stomp_me": -1.0, "bump": false, "min_gap": 9999.0, "box": false,
 		"trap": false, "spring": false, "edge": false, "bonk": false, "landed": false, "end": me.pos, "end_opp": op.pos, "t_end": 0.0, "delay": launch_at - hold_s}
-	var launched := false
-	var landed := false
-	var land_t := 0.0
-	var vx_land := 0.0
-	var t := 0.0
-	for i in MAX_SIM_STEPS:
+	var job := EvalJob.new()
+	job.dir = dir
+	job.charge = charge
+	job.c = c
+	job.skin = skin
+	job.isolate = isolate
+	job.me = me
+	job.op = op
+	job.wait = wait
+	job.launch_at = launch_at
+	job.res = res
+	return job
+
+
+func _eval_run(job: EvalJob, until_usec: int) -> bool:
+	if job.finished:
+		return true
+	var keep_skin := _extra_skin
+	_extra_skin = job.skin
+	var keep_spikes := _dyn_spikes
+	var keep_traps := _traps
+	if job.isolate:
+		var no_spikes: Array[Rect2] = []
+		var no_traps: Array[Rect2] = []
+		_dyn_spikes = no_spikes
+		_traps = no_traps
+	var c: Dictionary = job.c
+	var me := job.me
+	var op := job.op
+	var res := job.res
+	var dir := job.dir
+	var charge := job.charge
+	var wait := job.wait
+	var launch_at := job.launch_at
+	var g_me: float = c["g_me"]
+	var g_foe: float = c["g_foe"]
+	var foe_on: bool = c["foe_on"]
+	var hazard_y: float = float(c.get("hazard", INF))
+	var sd_speed: float = brawl.sudden_death_speed
+	var has_hazard := hazard_y != INF
+	var box_pos: Vector2 = c["box_pos"]
+	var box_on := box_pos.is_finite()
+	var box_reach := me.rad + BrawlItems.PICK_REACH - 2.0
+	var launched := job.launched
+	var landed := job.landed
+	var land_t := job.land_t
+	var vx_land := job.vx_land
+	var t := job.t
+	var min_gap := job.min_gap
+	var paused := false
+	while job.step < MAX_SIM_STEPS:
+		job.step += 1
 		t += DT
 		if not launched:
 			if me.air:
 				_advance(me, g_me)
 			if not wait and t >= launch_at:
-				me.vel = ball.jump_velocity(dir, charge)
+				me.vel = _jump_vel(dir, charge, c)
 				me.pos.y -= 1.0
 				me.air = true
 				launched = true
@@ -573,7 +750,7 @@ func _evaluate(dir: int, charge: float, immediate := false, ctx := {}) -> Dictio
 		if foe_on and op.air:
 			_advance(op, g_foe)
 		var danger := _danger_at(me.pos, me.rad)
-		if me.pos.y + me.rad + HAZARD_PAD >= float(c.get("hazard", INF)) - brawl.sudden_death_speed * t:
+		if has_hazard and me.pos.y + me.rad + HAZARD_PAD >= hazard_y - sd_speed * t:
 			danger |= 1
 		if danger & 1 != 0:
 			res["dead"] = true
@@ -582,14 +759,13 @@ func _evaluate(dir: int, charge: float, immediate := false, ctx := {}) -> Dictio
 			res["spring"] = true
 		if danger & 4 != 0:
 			res["trap"] = true
-		var box_pos: Vector2 = c["box_pos"]
-		if box_pos.is_finite() and me.pos.distance_to(box_pos) <= me.rad + BrawlItems.PICK_REACH - 2.0:
+		if box_on and me.pos.distance_to(box_pos) <= box_reach:
 			res["box"] = true
 		if foe_on:
 			var d := me.pos - op.pos
 			var dist := maxf(d.length(), 0.01)
 			var gap := dist - me.rad - op.rad
-			res["min_gap"] = minf(res["min_gap"], gap)
+			min_gap = minf(min_gap, gap)
 			if gap <= 1.0:
 				var above := -d.y / dist
 				if above > 0.6 and me.air and me.vel.y >= ball.stomp_speed:
@@ -609,6 +785,21 @@ func _evaluate(dir: int, charge: float, immediate := false, ctx := {}) -> Dictio
 			break
 		if wait and t >= WAIT_HORIZON:
 			break
+		if until_usec >= 0 and (job.step & 3) == 0 and Time.get_ticks_usec() >= until_usec:
+			paused = true
+			break
+	if paused:
+		job.launched = launched
+		job.landed = landed
+		job.land_t = land_t
+		job.vx_land = vx_land
+		job.t = t
+		job.min_gap = min_gap
+		_extra_skin = keep_skin
+		_dyn_spikes = keep_spikes
+		_traps = keep_traps
+		return false
+	res["min_gap"] = min_gap
 	res["t_end"] = t
 	res["end"] = me.pos
 	res["end_opp"] = op.pos
@@ -625,7 +816,21 @@ func _evaluate(dir: int, charge: float, immediate := false, ctx := {}) -> Dictio
 		for off in [-m, 0.0, m]:
 			if not _ground_ok(end.x + off, end.y, me.rad):
 				res["edge"] = true
-	return res
+	job.finished = true
+	_extra_skin = keep_skin
+	_dyn_spikes = keep_spikes
+	_traps = keep_traps
+	return true
+
+
+func _jump_vel(dir: int, charge: float, c: Dictionary) -> Vector2:
+	if not c.get("plain", false):
+		return ball.jump_velocity(dir, charge)
+	var boost := ball.boost_time
+	ball.boost_time = 0.0
+	var v := ball.jump_velocity(dir, charge)
+	ball.boost_time = boost
+	return v
 
 
 func _score(res: Dictionary) -> float:
@@ -697,6 +902,7 @@ func _begin_think() -> void:
 		for amount in CANDIDATE_CHARGES:
 			_queue.append([dir, amount])
 	_results.clear()
+	_think_job = null
 	_think_frames = 0
 	phase = "think"
 	thoughts += 1
@@ -761,19 +967,31 @@ func _pick_mode(foe_pos: Vector2) -> String:
 	return "chase"
 
 
+func _out_of_time() -> bool:
+	return _deadline >= 0 and Time.get_ticks_usec() >= _deadline
+
+
 func _think_step() -> void:
 	_think_frames += 1
-	for n in EVALS_PER_FRAME:
-		if _queue.is_empty():
+	var done := 0
+	while _think_job != null or not _queue.is_empty():
+		if _think_job == null:
+			_think_cand = _queue.pop_front()
+			_think_job = _eval_begin(_think_cand[0], _think_cand[1])
+		if not _eval_run(_think_job, _deadline):
 			break
-		var cand: Array = _queue.pop_front()
-		var res := _evaluate(cand[0], cand[1])
-		_results.append({"dir": cand[0], "charge": cand[1], "res": res, "score": _score(res)})
-	if _queue.is_empty():
-		_choose()
+		var res := _think_job.res
+		_think_job = null
+		_results.append({"dir": _think_cand[0], "charge": _think_cand[1], "res": res, "score": _score(res)})
+		done += 1
+		if (_deadline < 0 and done >= EVALS_PER_FRAME) or _out_of_time():
+			break
+	if _think_job == null and _queue.is_empty():
+		_choose_begin()
+		_choose_step()
 
 
-func _choose() -> void:
+func _choose_begin() -> void:
 	var wait_res: Dictionary = _results[0]["res"]
 	_threat = wait_res["stomp_me"] >= 0.0
 	if _threat and mode == "chase":
@@ -793,24 +1011,60 @@ func _choose() -> void:
 		ranked.push_front([0.0, _results[1]])
 	var strict := _since_hop < RELAX_AFTER and not brawl.stall_active
 	var sigma := (0.02 + 0.12 * (1.0 - skill)) * (1.0 if strict else CAREFUL_SCALE)
-	var best: Dictionary = _results[0]
-	var checks := 0
-	for item in ranked:
-		var r: Dictionary = item[1]
-		if r["charge"] < 0.0:
-			best = r
+	_ch_job = null
+	_ch_ranked = ranked
+	_ch_strict = strict
+	_ch_sigma = sigma
+	_ch_best = _results[0]
+	_ch_i = 0
+	_ch_checks = 0
+	_ch_amounts = []
+	_ch_k = 0
+	phase = "choose"
+
+
+func _choose_step() -> void:
+	while _ch_i < _ch_ranked.size():
+		var r: Dictionary = _ch_ranked[_ch_i][1]
+		if _ch_amounts.is_empty():
+			if r["charge"] < 0.0:
+				_ch_best = r
+				break
+			if r["res"]["dead"]:
+				_ch_i += 1
+				continue
+			if r["dir"] == 0:
+				_ch_best = r
+				break
+			if _ch_checks >= 6:
+				_ch_i += 1
+				continue
+			_ch_checks += 1
+			var charge: float = r["charge"]
+			var err := 1.5 * _jump_sigma(_ch_sigma, charge)
+			_ch_amounts = [maxf(0.0, charge - err), charge, minf(1.0, charge + err)]
+			_ch_k = 0
+		if _ch_job == null:
+			_ch_job = _eval_begin(r["dir"], _ch_amounts[_ch_k], false, {}, SAFETY_SKIN)
+		if not _eval_run(_ch_job, _deadline):
+			return
+		var res := _ch_job.res
+		_ch_job = null
+		_ch_k += 1
+		if res["dead"] or res["spring"] or (_ch_strict and res["edge"]):
+			_ch_amounts = []
+			_ch_i += 1
+		elif _ch_k >= _ch_amounts.size():
+			_ch_best = r
 			break
-		if r["res"]["dead"]:
-			continue
-		if r["dir"] == 0:
-			best = r
-			break
-		if checks >= 6:
-			continue
-		checks += 1
-		if _robust(r["dir"], r["charge"], 1.5 * _jump_sigma(sigma, r["charge"]), strict):
-			best = r
-			break
+		if _out_of_time():
+			return
+	_choose_finish(_ch_best)
+
+
+func _choose_finish(best: Dictionary) -> void:
+	var sigma := _ch_sigma
+	_ch_ranked = []
 	_think_cd = lerpf(0.30, 0.03, skill)
 	phase = "idle"
 	if best["charge"] < 0.0:
@@ -834,18 +1088,6 @@ func _jump_sigma(sigma: float, charge: float) -> float:
 	return sigma * (0.3 + charge)
 
 
-func _robust(dir: int, charge: float, err: float, strict := true) -> bool:
-	_extra_skin = SAFETY_SKIN
-	var safe := true
-	for amount in [maxf(0.0, charge - err), charge, minf(1.0, charge + err)]:
-		var res := _evaluate(dir, amount)
-		if res["dead"] or res["spring"] or (strict and res["edge"]):
-			safe = false
-			break
-	_extra_skin = 0.0
-	return safe
-
-
 func _start_charge() -> void:
 	if _plan_dir == 0:
 		_jump_now()
@@ -853,23 +1095,42 @@ func _start_charge() -> void:
 	_press(_key(_plan_dir))
 
 
-func _launch_is_safe() -> bool:
+func _launch_begin() -> void:
 	_snapshot()
-	var real_dir := ball.charge_dir if _plan_dir != 0 else 0
-	var amount := ball.charge if real_dir != 0 else ball.straight_jump
-	_extra_skin = SAFETY_SKIN
-	var safe := true
+	_lc_dir = ball.charge_dir if _plan_dir != 0 else 0
+	var amount := ball.charge if _lc_dir != 0 else ball.straight_jump
+	_lc_amounts = []
 	for delta in [-LAUNCH_CHECK_ERR, 0.0, LAUNCH_CHECK_ERR]:
-		var res := _evaluate(real_dir, clampf(amount + delta, 0.0, 1.0), true)
+		_lc_amounts.append(clampf(amount + delta, 0.0, 1.0))
+	_lc_k = 0
+	_lc_safe = true
+	_lc_job = null
+
+
+func _launch_step() -> void:
+	while _lc_k < _lc_amounts.size() and _lc_safe:
+		if _lc_job == null:
+			_lc_job = _eval_begin(_lc_dir, _lc_amounts[_lc_k], true, {}, SAFETY_SKIN)
+		if not _eval_run(_lc_job, _deadline):
+			return
+		var res := _lc_job.res
+		_lc_job = null
+		_lc_k += 1
 		if res["dead"] or res["spring"] or (res["bonk"] and res["edge"]):
-			safe = false
-			break
-	_extra_skin = 0.0
-	return safe
+			_lc_safe = false
+		elif _lc_k < _lc_amounts.size() and _out_of_time():
+			return
+	_launch_finish(_lc_safe)
 
 
 func _jump_now() -> void:
-	if not _launch_is_safe():
+	_launch_begin()
+	phase = "check"
+	_launch_step()
+
+
+func _launch_finish(safe: bool) -> void:
+	if not safe:
 		for key in [_act("left"), _act("right")]:
 			_release(key)
 		aborts += 1

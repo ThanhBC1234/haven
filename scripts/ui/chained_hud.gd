@@ -12,6 +12,7 @@ const STAR_PX := 4.0
 const HEART_TEX := preload("res://assets/items/heart.png")
 const HEART_SIZE := 28.0
 const HEART_GAP := 4.0
+const PANEL_KEY_DELAY := 0.6
 
 var level_name := ""
 var max_lives := 5
@@ -27,6 +28,7 @@ var result_piggyback: Label
 var next_button: Button
 var retry_button: Button
 var menu_button: Button
+var panel_keys_ready := false
 var _frame: StyleBoxTexture
 var _flash_tween: Tween
 
@@ -50,7 +52,7 @@ func setup(title: String, lives_max: int) -> void:
 	message_label.modulate.a = 0.0
 	add_child(message_label)
 
-	_add_hint("P1: A / D + W, S: anchor", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
+	_add_hint("P1: A / D + W / SPACE, S: anchor", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
 	_add_hint("P2: LEFT / RIGHT + UP, DOWN: anchor", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
 	_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
 	queue_redraw()
@@ -88,6 +90,13 @@ func flash(text: String, seconds := 0.9, color := UiTheme.ACCENT) -> void:
 	_flash_tween = create_tween()
 	_flash_tween.tween_interval(seconds)
 	_flash_tween.tween_property(message_label, "modulate:a", 0.0, 0.5)
+
+
+func clear_message() -> void:
+	if _flash_tween:
+		_flash_tween.kill()
+	if message_label != null:
+		message_label.modulate.a = 0.0
 
 
 static func winner_of(result: Vector2i) -> int:
@@ -148,7 +157,25 @@ func show_result(result: Vector2i, totals: Array, has_next: bool) -> void:
 	menu_button.text = "Menu"
 	menu_button.pressed.connect(menu_pressed.emit)
 	row.add_child(menu_button)
-	(next_button if next_button != null else retry_button).grab_focus()
+	var buttons: Array = [retry_button, menu_button]
+	if next_button != null:
+		buttons.push_front(next_button)
+	_arm_panel_keys(buttons, next_button if next_button != null else retry_button)
+
+
+func _arm_panel_keys(buttons: Array, first: Button) -> void:
+	panel_keys_ready = false
+	for b: Button in buttons:
+		b.focus_mode = Control.FOCUS_NONE
+	var wait := create_tween()
+	wait.tween_interval(PANEL_KEY_DELAY)
+	wait.tween_callback(func() -> void:
+		if not is_instance_valid(first):
+			return
+		for b: Button in buttons:
+			b.focus_mode = Control.FOCUS_ALL
+		panel_keys_ready = true
+		first.grab_focus())
 
 
 func _result_label(text: String, color: Color, font_size: int) -> Label:

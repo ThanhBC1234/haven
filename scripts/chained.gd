@@ -13,6 +13,8 @@ const FALL_MARGIN := 160.0
 const RESPAWN_INVULN := 1.5
 const RESPAWN_SPREAD := 24.0
 const BALL_LAYER := 2
+const GOAL_DELAY := 0.9
+const GOAL_SECONDS := 2.4
 const PLAYER2_CHAR := "P"
 const MIN_ZOOM := 0.75
 const SCATTER_OFFSETS := [64.0, -64.0, 96.0, -96.0, 128.0, -128.0, 160.0, -160.0, 192.0, -192.0, 224.0, -224.0]
@@ -130,8 +132,21 @@ func _start_intro() -> void:
 	for ball in balls:
 		ball.dead = false
 	match_running = true
-	hud.flash("GO!", 0.7, Color("#f7d046"))
+	var penalty := piggyback != null and piggyback.is_queued()
+	if penalty:
+		hud.clear_message()
+	else:
+		hud.flash("GO!", 0.7, Color("#f7d046"))
+		if Game.chained_index == 0:
+			var goal := create_tween()
+			goal.tween_interval(GOAL_DELAY)
+			goal.tween_callback(_flash_goal)
 	level_started.emit()
+
+
+func _flash_goal() -> void:
+	if match_running and not _busy and not finished and not piggyback.piggyback_active and events.active_event == "":
+		hud.flash("STARS SLIDE TO THE LOWER PLAYER!", GOAL_SECONDS)
 
 
 func counts() -> Vector2i:
