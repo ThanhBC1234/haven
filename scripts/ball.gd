@@ -90,6 +90,13 @@ var _base_radius := 15.0
 var _base_shape_radius := 15.0
 var _base_mass := 1.0
 var _shape_copied := false
+var jump_locked := false
+var carried := false
+var _carry_layer := 0
+var _carry_mask := 0
+var _hop_pos := Vector2.ZERO
+var _hop_vel := Vector2.ZERO
+var _hop_pending := false
 
 
 func _ready() -> void:
@@ -107,7 +114,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if not dead:
+	if not dead and not carried:
 		_read_input(delta)
 	if not _jump_request.is_empty():
 		_jump_request["time"] -= delta
@@ -174,13 +181,8 @@ func _read_input(delta: float) -> void:
 		var tmp := left
 		left = right
 		right = tmp
-	if Input.is_action_just_pressed(_action("jump")):
-		if charge_dir != 0:
-			jump(charge_dir, charge)
-		else:
-			jump(0, straight_jump)
-		charge_dir = 0
-		charge = 0.0
+	if not jump_locked and Input.is_action_just_pressed(_action("jump")):
+		jump_with_charge()
 		return
 	if charge_dir == 0:
 		if left and not right:
@@ -197,12 +199,21 @@ func _read_input(delta: float) -> void:
 			charge = 0.0
 
 
+func jump_with_charge() -> void:
+	if charge_dir != 0:
+		jump(charge_dir, charge)
+	else:
+		jump(0, straight_jump)
+	charge_dir = 0
+	charge = 0.0
+
+
 func _action(action: String) -> String:
 	return action_prefix + action
 
 
 func is_use_held() -> bool:
-	if dead or action_prefix.is_empty():
+	if dead or carried or action_prefix.is_empty():
 		return false
 	return Input.is_action_pressed(_action("use"))
 
@@ -288,6 +299,23 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		_teleport_to = null
 		return
 
+	if carried:
+		on_ground = false
+		_was_on_ground = false
+		_touching_balls = {}
+		_kick = Vector2.ZERO
+		_bounce = 0.0
+		_jump_request = {}
+		return
+	if _hop_pending:
+		_hop_pending = false
+		state.transform = Transform2D(0.0, _hop_pos)
+		state.transform = Transform2D(0.0, _hop_pos)
+		state.linear_velocity = _hop_vel
+		_kick = Vector2.ZERO
+		_bounce = 0.0
+		_jump_request = {}
+
 	on_ground = false
 	var touching := {}
 	for i in state.get_contact_count():
@@ -353,6 +381,46 @@ func teleport(pos: Vector2) -> void:
 	_bounce = 0.0
 	_kick = Vector2.ZERO
 	_coyote = 0.0
+	_hop_pending = false
+
+
+func begin_carried() -> void:
+	if carried:
+		return
+	carried = true
+	_hop_pending = false
+	_carry_layer = collision_layer
+	_carry_mask = collision_mask
+	collision_layer = 0
+	collision_mask = 0
+	charge_dir = 0
+	charge = 0.0
+	_jump_request = {}
+	on_ground = false
+
+
+func carry_to(pos: Vector2, vel: Vector2) -> void:
+	if not carried:
+		return
+	PhysicsServer2D.body_set_state(get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D(0.0, pos))
+	PhysicsServer2D.body_set_state(get_rid(), PhysicsServer2D.BODY_STATE_LINEAR_VELOCITY, vel)
+	global_position = pos
+	linear_velocity = vel
+
+
+func end_carried(hop_pos: Variant = null, hop_vel := Vector2.ZERO) -> void:
+	if not carried:
+		return
+	carried = false
+	collision_layer = _carry_layer
+	collision_mask = _carry_mask
+	_jump_request = {}
+	charge_dir = 0
+	charge = 0.0
+	if hop_pos != null:
+		_hop_pos = hop_pos
+		_hop_vel = hop_vel
+		_hop_pending = true
 
 
 func bounce_up(speed: float) -> void:

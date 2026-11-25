@@ -32,6 +32,7 @@ var level_name := ""
 var balls: Array[Ball] = []
 var rope: Rope
 var events: ChainedEvents
+var piggyback: ChainedPiggyback
 var lives := LIVES
 var spawn_points: Array[Vector2] = []
 var respawn_position := Vector2.ZERO
@@ -88,6 +89,11 @@ func _ready() -> void:
 	level.add_child(rope)
 	level.move_child(rope, balls[0].get_index())
 	rope.setup(balls[0], balls[1])
+
+	piggyback = ChainedPiggyback.new()
+	piggyback.name = "Piggyback"
+	add_child(piggyback)
+	piggyback.setup(self)
 
 	level.star_collected_by.connect(_on_star)
 	level.heart_collected.connect(_on_heart)
@@ -319,7 +325,7 @@ func restart_level() -> void:
 func _on_retry() -> void:
 	Game.chained_totals[0] = _base_totals[0]
 	Game.chained_totals[1] = _base_totals[1]
-	Game.start_chained(Game.chained_index)
+	Game.start_chained(Game.chained_index, true)
 
 
 func _on_finished() -> void:
@@ -341,6 +347,7 @@ func _on_finished() -> void:
 	await get_tree().create_timer(finish_panel_delay).timeout
 	if not is_inside_tree():
 		return
+	piggyback.record_result(result)
 	hud.show_result(result, Game.chained_totals, has_next_level())
 
 

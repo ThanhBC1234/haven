@@ -23,6 +23,7 @@ var result_title: Label
 var result_p1: Label
 var result_p2: Label
 var result_totals: Label
+var result_piggyback: Label
 var next_button: Button
 var retry_button: Button
 var menu_button: Button
@@ -127,6 +128,9 @@ func show_result(result: Vector2i, totals: Array, has_next: bool) -> void:
 	stars_row.add_child(result_p2)
 	result_totals = _result_label("TOTAL   P1 %d  -  %d P2" % [totals[0], totals[1]], UiTheme.TEXT, UiTheme.FONT_MEDIUM)
 	box.add_child(result_totals)
+	if win != 0:
+		result_piggyback = _result_label("P%d MUST CARRY P%d NEXT ROUND!" % [3 - win, win], PLAYER_COLORS[2 - win], UiTheme.FONT_MEDIUM)
+		box.add_child(result_piggyback)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER

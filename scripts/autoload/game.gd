@@ -32,6 +32,8 @@ var save_enabled := true
 var brawl_vs_bot := false
 var chained_index := 0
 var chained_totals: Array[int] = [0, 0]
+var chained_piggyback := 0
+var chained_switching := false
 
 
 func _ready() -> void:
@@ -60,11 +62,14 @@ func start_brawl(vs_bot := false) -> void:
 	get_tree().change_scene_to_file(BRAWL_SCENE)
 
 
-func start_chained(index := 0) -> void:
+func start_chained(index := 0, keep_piggyback := false) -> void:
 	chained_index = index
 	if index == 0:
 		chained_totals[0] = 0
 		chained_totals[1] = 0
+		if not keep_piggyback:
+			chained_piggyback = 0
+	chained_switching = true
 	get_tree().change_scene_to_file(CHAINED_SCENE)
 
 
@@ -90,6 +95,8 @@ func record_endless(score: int, stars: int) -> bool:
 
 
 func go_to_menu() -> void:
+	chained_piggyback = 0
+	chained_switching = false
 	get_tree().change_scene_to_file(MENU_SCENE)
 
 

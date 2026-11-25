@@ -3448,6 +3448,10 @@ func _chained_flow_checks() -> void:
 				break
 			await _frames(1)
 		_expect(cur.match_running and cur.has_next_level() == (index < 2), "flow: level %d starts, has_next_level() is %s" % [index + 1, str(cur.has_next_level())])
+		_expect(cur.piggyback.piggyback_active == (index > 0), "flow: level %d starts with the loser carrying the winner: %s" % [index + 1, str(cur.piggyback.piggyback_active)])
+		if cur.piggyback.piggyback_active:
+			cur.piggyback.stop_piggyback()
+			await _frames(40)
 		_set_beads(cur.rope, bead_sets[index])
 		cur.rope.freeze_beads = true
 		var flag: Pickup = null
