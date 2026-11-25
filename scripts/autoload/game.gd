@@ -1,128 +1,112 @@
 extends Node
-## Autoload "Game" (gọi được từ mọi script bằng tên Game).
-## Cài phím, chuyển giữa menu / màn thường / chế độ vô tận, và LƯU tiến độ vào máy:
-## điểm cao nhất chế độ vô tận, tổng số sao đã gom (giống "xu" của Subway Surfers), số sao tốt nhất mỗi màn.
 
-const MENU_SCENE := "res://scenes/menu.tscn"         # đường dẫn cảnh menu
-const PLAY_SCENE := "res://scenes/play.tscn"         # đường dẫn cảnh chơi màn thường
-const ENDLESS_SCENE := "res://scenes/endless.tscn"   # đường dẫn cảnh chế độ vô tận
-const BRAWL_SCENE := "res://scenes/brawl.tscn"      # đường dẫn cảnh chế độ đấu 2 người (Bounce Brawl)
-const CHAINED_SCENE := "res://scenes/chained.tscn"   # đường dẫn cảnh chế độ Chained (2 người bị trói bằng dây)
-const SAVE_PATH :="user://bouncing_ball.cfg"   # file lưu (nằm trong thư mục dữ liệu của Godot trên máy)
+const MENU_SCENE := "res://scenes/menu.tscn"
+const PLAY_SCENE := "res://scenes/play.tscn"
+const ENDLESS_SCENE := "res://scenes/endless.tscn"
+const BRAWL_SCENE := "res://scenes/brawl.tscn"
+const CHAINED_SCENE := "res://scenes/chained.tscn"
+const SAVE_PATH :="user://bouncing_ball.cfg"
 
-## Phím điều khiển. Muốn đổi phím thì sửa ở đây (KEY_A, KEY_SPACE, KEY_LEFT...).
-## Giữ A/← hoặc D/→ để nghiêng và tích lực; bấm Space / W / ↑ để nhảy.
 const KEYS := {
-	"left": [KEY_A, KEY_LEFT],   # sang trái
-	"right": [KEY_D, KEY_RIGHT],   # sang phải
-	"jump": [KEY_SPACE, KEY_W, KEY_UP],   # nhảy
-	"shoot": [KEY_F, KEY_J],    # bắn (khi đã nhặt súng)
-	"restart": [KEY_R],        # tự nổ, về cờ lưu / đầu đoạn
-	"back": [KEY_ESCAPE],      # về menu
-	# Phím riêng cho chế độ 2 người chơi (Ball.action_prefix = "p1_" hoặc "p2_")
-	"p1_left": [KEY_A],        # người chơi 1: trái
-	"p1_right": [KEY_D],       # người chơi 1: phải
-	"p1_jump": [KEY_W],        # người chơi 1: nhảy
-	"p1_use": [KEY_S],         # người chơi 1: dùng vật phẩm / kỹ năng
-	"p2_left": [KEY_LEFT],     # người chơi 2: trái
-	"p2_right": [KEY_RIGHT],   # người chơi 2: phải
-	"p2_jump": [KEY_UP],       # người chơi 2: nhảy
-	"p2_use": [KEY_DOWN],      # người chơi 2: dùng vật phẩm / kỹ năng
+	"left": [KEY_A, KEY_LEFT],
+	"right": [KEY_D, KEY_RIGHT],
+	"jump": [KEY_SPACE, KEY_W, KEY_UP],
+	"shoot": [KEY_F, KEY_J],
+	"restart": [KEY_R],
+	"back": [KEY_ESCAPE],
+	"p1_left": [KEY_A],
+	"p1_right": [KEY_D],
+	"p1_jump": [KEY_W],
+	"p1_use": [KEY_S],
+	"p2_left": [KEY_LEFT],
+	"p2_right": [KEY_RIGHT],
+	"p2_jump": [KEY_UP],
+	"p2_use": [KEY_DOWN],
 }
 
-var level_index := 0       # màn thường đang chơi (0 = màn đầu trong LevelData.LEVELS)
-var best_stars := {}       # số sao nhiều nhất từng màn thường: {chỉ số màn: số sao}
-var best_score := 0        # điểm cao nhất chế độ vô tận
-var total_stars := 0       # tổng số sao đã gom qua mọi lượt chơi
-var save_enabled := true   # bài test tắt đi để không ghi đè kỷ lục thật
-var brawl_vs_bot := false  # chế độ đấu 2 người: true = người chơi 2 là máy (Brawl tạo BrawlBot khi cờ này bật)
-var chained_index := 0     # màn Chained đang chơi (chỉ số trong ChainedData.LEVELS)
-var chained_totals: Array[int] = [0, 0]   # tổng sao của người chơi 1 và 2 qua các màn Chained đã xong (màn đầu bắt đầu thì về 0)
+var level_index := 0
+var best_stars := {}
+var best_score := 0
+var total_stars := 0
+var save_enabled := true
+var brawl_vs_bot := false
+var chained_index := 0
+var chained_totals: Array[int] = [0, 0]
 
 
-## Godot gọi một lần khi mở game: cài phím, đọc file lưu.
 func _ready() -> void:
-	for action in KEYS:                      # duyệt từng hành động (left, right, jump...)
-		if not InputMap.has_action(action):  # hành động chưa có trong bảng phím
-			InputMap.add_action(action)          # tạo hành động, ví dụ "jump"
-		InputMap.action_erase_events(action) # xóa phím cũ của hành động
-		for key in KEYS[action]:             # duyệt từng phím của hành động
-			var ev := InputEventKey.new()    # tạo sự kiện phím mới
-			ev.physical_keycode = key            # gán phím vật lý cho hành động
-			InputMap.action_add_event(action, ev)   # thêm phím vào hành động
-	load_progress()                          # đọc tiến độ đã lưu
+	for action in KEYS:
+		if not InputMap.has_action(action):
+			InputMap.add_action(action)
+		InputMap.action_erase_events(action)
+		for key in KEYS[action]:
+			var ev := InputEventKey.new()
+			ev.physical_keycode = key
+			InputMap.action_add_event(action, ev)
+	load_progress()
 
 
-## Vào chơi màn thường số `index`.
 func start_level(index: int) -> void:
-	level_index = index                      # nhớ màn sẽ chơi
-	get_tree().change_scene_to_file(PLAY_SCENE)   # chuyển sang cảnh chơi
+	level_index = index
+	get_tree().change_scene_to_file(PLAY_SCENE)
 
 
-## Vào chế độ vô tận.
 func start_endless() -> void:
-	get_tree().change_scene_to_file(ENDLESS_SCENE)   # chuyển sang cảnh vô tận
+	get_tree().change_scene_to_file(ENDLESS_SCENE)
 
 
-## Vào chế độ đấu 2 người (Bounce Brawl). `vs_bot` = true: người chơi 2 do máy điều khiển (BrawlBot).
 func start_brawl(vs_bot := false) -> void:
-	brawl_vs_bot = vs_bot                    # nhớ để cảnh đấu và nút Rematch dùng lại
-	get_tree().change_scene_to_file(BRAWL_SCENE)   # chuyển sang cảnh đấu 2 người
+	brawl_vs_bot = vs_bot
+	get_tree().change_scene_to_file(BRAWL_SCENE)
 
 
-## Vào chế độ Chained (hai người bị trói bằng dây) ở màn số `index`. Màn đầu (index 0) thì tính lại tổng sao từ 0.
 func start_chained(index := 0) -> void:
-	chained_index = index                    # nhớ màn sẽ chơi (cảnh Chained đọc lại)
-	if index == 0:                           # bắt đầu lại từ màn đầu
-		chained_totals[0] = 0                # tổng sao người chơi 1 về 0
-		chained_totals[1] = 0                # tổng sao người chơi 2 về 0
-	get_tree().change_scene_to_file(CHAINED_SCENE)   # chuyển sang cảnh Chained
+	chained_index = index
+	if index == 0:
+		chained_totals[0] = 0
+		chained_totals[1] = 0
+	get_tree().change_scene_to_file(CHAINED_SCENE)
 
 
-## Sang màn kế tiếp. Trả về false nếu đã là màn cuối.
 func next_level() -> bool:
-	if level_index + 1 >= LevelData.LEVELS.size():   # đã là màn cuối
-		return false                         # báo không còn màn
-	start_level(level_index + 1)             # vào màn tiếp theo
-	return true                              # báo đã chuyển màn
+	if level_index + 1 >= LevelData.LEVELS.size():
+		return false
+	start_level(level_index + 1)
+	return true
 
 
-## Ghi lại số sao nếu nhiều hơn lần trước (màn thường), cộng vào tổng sao.
 func record_stars(index: int, stars: int) -> void:
-	best_stars[index] = maxi(stars, best_stars.get(index, 0))   # giữ số sao cao nhất của màn
-	total_stars += stars                     # cộng vào tổng sao
-	save_progress()                          # lưu ra file
+	best_stars[index] = maxi(stars, best_stars.get(index, 0))
+	total_stars += stars
+	save_progress()
 
 
-## Kết thúc một lượt vô tận: cộng sao, cập nhật kỷ lục. Trả về true nếu phá kỷ lục.
 func record_endless(score: int, stars: int) -> bool:
-	total_stars += stars                     # cộng sao lượt này vào tổng
-	var new_best := score > best_score       # có phá kỷ lục không
-	best_score = maxi(best_score, score)     # giữ điểm cao nhất
-	save_progress()                          # lưu ra file
-	return new_best                          # báo có phá kỷ lục hay không
+	total_stars += stars
+	var new_best := score > best_score
+	best_score = maxi(best_score, score)
+	save_progress()
+	return new_best
 
 
 func go_to_menu() -> void:
-	get_tree().change_scene_to_file(MENU_SCENE)   # chuyển về cảnh menu
+	get_tree().change_scene_to_file(MENU_SCENE)
 
 
-## Lưu tiến độ ra file.
 func save_progress() -> void:
-	if not save_enabled:                     # đang chạy test: không lưu
+	if not save_enabled:
 		return
-	var cfg := ConfigFile.new()              # tạo file cấu hình (dạng khóa = giá trị)
-	cfg.set_value("progress", "best_score", best_score)     # ghi điểm cao nhất
-	cfg.set_value("progress", "total_stars", total_stars)   # ghi tổng sao
-	cfg.set_value("progress", "best_stars", best_stars)     # ghi sao tốt nhất từng màn
-	cfg.save(SAVE_PATH)                      # ghi ra ổ đĩa
+	var cfg := ConfigFile.new()
+	cfg.set_value("progress", "best_score", best_score)
+	cfg.set_value("progress", "total_stars", total_stars)
+	cfg.set_value("progress", "best_stars", best_stars)
+	cfg.save(SAVE_PATH)
 
 
-## Đọc tiến độ từ file (lần đầu chơi chưa có file thì giữ giá trị 0).
 func load_progress() -> void:
-	var cfg := ConfigFile.new()              # tạo đối tượng đọc file cấu hình
-	if cfg.load(SAVE_PATH) != OK:            # đọc không được (chưa có file)
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) != OK:
 		return
-	best_score = cfg.get_value("progress", "best_score", 0)     # đọc điểm cao nhất
-	total_stars = cfg.get_value("progress", "total_stars", 0)   # đọc tổng sao
-	best_stars = cfg.get_value("progress", "best_stars", {})    # đọc sao tốt nhất từng màn
+	best_score = cfg.get_value("progress", "best_score", 0)
+	total_stars = cfg.get_value("progress", "total_stars", 0)
+	best_stars = cfg.get_value("progress", "best_stars", {})

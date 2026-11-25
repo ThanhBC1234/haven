@@ -1,0 +1,7 @@
+# Luôn dùng xuống dòng kiểu LF cho mọi file chữ (bản đồ chữ trong .gd bị đọc sai nếu là CRLF)
+* text=auto eol=lf
+# File ảnh, font, âm thanh: giữ nguyên byte
+*.png binary
+*.ttf binary
+*.wav binary
+*.ogg binary

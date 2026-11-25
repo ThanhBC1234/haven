@@ -3,3 +3,6 @@
 # Bản xuất (web build, file zip)
 build/
 exports/
+
+# Thư mục làm việc tạm của Claude Code (worktree của agent)
+.claude/

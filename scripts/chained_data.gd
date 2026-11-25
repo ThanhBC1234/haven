@@ -1,33 +1,8 @@
 class_name ChainedData
-## Các màn của chế độ Chained (hai người bị trói bằng dây). Mỗi ký tự là một ô 32 x 32 pixel, bản đồ cuộn ngang như màn thường.
-## Ký tự giống scripts/level_data.gd (# đất, ^ gai, v gai treo, e quái, K cờ lưu, F đích, * ngôi sao, + trái tim, T lò xo, O chỗ xuất phát của người chơi 1...),
-## thêm một ký tự riêng của chế độ này:
-##
-##   P  chỗ xuất phát của người chơi 2 (Level bỏ qua ký tự này, chained.gd tự đọc), đặt cách O vài ô
-##
-## Quy tắc khi vẽ màn mới (có bài test kiểm tra):
-##   - cột đầu và cột cuối là tường (#) từ trên xuống dưới; có đúng một O, một P, một F; ít nhất 10 sao, 2 - 3 cờ lưu K
-##   - mọi hàng dài bằng nhau; cao khoảng 18 - 24 ô, rộng khoảng 100 - 170 ô
-##   - số đo dây (scripts/rope.gd): chùng tới 5 ô, căng hết cỡ ở 10 ô, nên hai người không bao giờ xa nhau quá ~10 ô. Hệ quả cho khe (hố rơi):
-##     nhảy thường khi đang bị trói: người nhảy bị dây giật lại, người kia bị kéo theo xuống khe (chỉ qua được nếu hai người nhảy cùng lúc, hoặc rơi chết).
-##     "Súng cao su": một người neo (giữ S / mũi tên xuống) ở mép khe, người kia lùi ra sau cho dây căng, cũng giữ neo, rồi bấm nhảy về phía người neo:
-##     dây hất vọt qua đầu người neo, tới khoảng 9 ô bên kia mép (nhảy đủ lực không bị trói được 18 ô). Khe rộng 7 ô là cỡ vừa qua được bằng súng cao su.
-##   - nhảy đủ lực cao 5 ô; nửa lực cao 3 ô xa 7 ô (xem bảng số đo ở đầu scripts/level_data.gd)
-##   - đừng vẽ hố hẹp có thành đứng cao hơn 2 ô mà không có bậc thang: bóng nhảy chéo đập vào thành thì ma sát hãm mất đà bay lên, không leo ra được
-##     (thung lũng ở màn 1 có hai bậc 2 ô để leo ra). Khe không đáy thì rơi chết, hai người cùng chết rồi hồi sinh ở cờ lưu, không kẹt.
-##   - số đo thêm (đo bằng bài test, tests/smoke.gd mục màn 2 và màn 3): giữ phím 12 / 16 / 20 / 32 khung rồi nhảy thì xa 3,6 / 5 / 6,7 / 12,9 ô và cao 2,2 / 2,7 / 3,2 / 4,5 ô;
-##     bậc cao 2 ô leo được khi đứng cách chân bậc 1,4 - 3,4 ô và nhảy 12 - 16 khung; lò xo nhún cao ~6,7 ô khi người kia neo bên cạnh (ledge cao 6 ô; người kia đã ở trên ledge và neo thì dây còn kéo thêm);
-##     trần gai (v) cách sàn 5,5 ô: nhảy <= 30 khung đi qua, >= 36 khung chạm gai; thang máy / bệ di chuyển đứng chờ 0,6 giây ở mỗi đầu; súng cao su tối đa ~9 ô sau người neo (khe 7 ô là vừa).
-##   - DUNG SAI (người chơi thật không bấm đúng từng khung): mỗi đoạn khó phải qua được trong khoảng >= 12 khung giữ phím (0,2 giây), hai người nhảy cùng lúc thì lệch giờ +-6 khung vẫn qua,
-##     súng cao su qua được khi người kia lùi 240 - 320 pixel. Bài test "_window" trong tests/smoke.gd kiểm tra hai mép và giữa của từng cửa sổ; đừng rút hẹp mà không chạy lại.
-##     Rộng cửa sổ: dải lò xo rộng 5 ô, bậc thang cao 1 ô, bệ thang máy rộng 5 ô, sàn đáp rộng >= 8 ô, hố nhảy đôi không có gai ngay sau chỗ đáp. Lúc người kia neo, dây kéo người đang nhảy xa khỏi người neo
-##     (xa quá 5 ô là bị giật lại rất mạnh): đừng đặt người neo cách chỗ đáp hơn ~6 ô.
-## Thêm màn: chép một khối {"name": ..., "map": r"""..."""} vào LEVELS. Menu chỉ có nút Chained vào màn đầu, các màn sau đi tiếp bằng nút Next level.
 
-const PLAYER2_CHAR := "P"               # ký tự chỗ xuất phát của người chơi 2
+const PLAYER2_CHAR := "P"
 
 const LEVELS := [
-	# Màn 1: khởi động dễ, thung lũng có sao ở thấp gần gai, khe 7 ô cần súng cao su (3 sao nằm trên đường bay), hai sao kẹp giữa hai cụm gai, sàn cuối với sao trên cao.
 	{"name": "Tied Together", "map": r"""
 #..............................................................................................................................#
 #..............................................................................................................................#
@@ -54,8 +29,6 @@ const LEVELS := [
 ################################################################.......#########################################################
 ################################################################.......#########################################################
 """},
-	# Màn 2: đi lên cao. Cầu thang 6 bậc cao 1 ô, ao gai thấp có 3 sao sát gai và 2 quái, hố 5 ô có ván bập bênh làm cầu, tháp 6 ô phải nhún lò xo (dải 5 ô; người kia neo bên cạnh, rồi đổi vai),
-	# thang máy chở cả hai lên cao nguyên, khe 7 ô trên cao cần súng cao su (hai sao nằm trên đường bay), rồi bậc thang xuống đích.
 	{"name": "Up and Over", "map": r"""
 #..........................................................................................................................................#
 #..........................................................................................................................................#
@@ -82,9 +55,6 @@ const LEVELS := [
 #####################################################.....############################################.......###############################
 #####################################################.....############################################.......###############################
 """},
-	# Màn 3: khó nhất. Ba khe 7 ô liền nhau, đảo thấp dần 2 ô mỗi lần, phải qua bằng súng cao su; hầm trần gai (nhảy gần đầy lực là chết) có hai cụm gai sàn; thang máy trong giếng chở cả hai
-	# lên ledge dưới trần gai; cú nhảy đôi (cả hai nhảy đủ mạnh, lệch giờ vài khung cũng được) từ ledge xuống đảo qua khe 8 ô (nhảy lẻ một người thì dây kéo người kia xuống hố);
-	# đoạn quái (4 con, dẫm đầu là chết) và cụm gai dưới trần gai tới đích.
 	{"name": "Chain Reaction", "map": r"""
 #............................................................................#############################.....##############.........................#############
 #............................................................................#############################.....##############.........................#############

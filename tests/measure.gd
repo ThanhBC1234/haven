@@ -1,10 +1,6 @@
 extends Node
-## Đo tầm nhảy của lật đật để thiết kế màn cho đúng. Chạy:
-##   godot --headless --fixed-fps 60 --path . res://tests/measure.tscn
-## In ra: độ mạnh (0..1) -> cao bao nhiêu ô, xa bao nhiêu ô (tính tới lần chạm đất đầu tiên), và các lần nảy sau đó.
 
 
-## Đo lần lượt các độ mạnh khác nhau trên một mặt đất phẳng dài.
 func _ready() -> void:
 	var rows := []
 	for i in 12:
@@ -38,7 +34,7 @@ func _ready() -> void:
 			if first_land_x < 0.0 and ball.on_ground:
 				first_land_x = ball.global_position.x
 			if prev_vy < 0.0 and ball.linear_velocity.y >= 0.0 and first_land_x >= 0.0:
-				bounces.append("%.1f" % ((ground_y - peak) / 32.0))   # đỉnh của mỗi lần nảy lại
+				bounces.append("%.1f" % ((ground_y - peak) / 32.0))
 			if ball.linear_velocity.y > 0.0 and prev_vy <= 0.0:
 				peak = y
 			prev_vy = ball.linear_velocity.y

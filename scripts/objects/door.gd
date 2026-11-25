@@ -1,47 +1,40 @@
-class_name Door                         # tên lớp: Level dùng Door để tạo cửa
-extends StaticBody2D                    # vật đứng yên, có va chạm (chặn bóng)
-## Cửa chắn đường. Mở khi nút cùng kênh đang bị đè, đóng lại khi thả nút.
-## Gốc tọa độ ở góc trên bên trái. Cao bao nhiêu ô do bản đồ chữ quyết định.
+class_name Door
+extends StaticBody2D
 
-@export var channel := "a"              # kênh: nút cùng chữ cái sẽ mở cửa này
-@export var height_tiles := 3           # cửa cao bao nhiêu ô
-@export var show_placeholder := true    # bật = vẽ hình tạm bằng code
+@export var channel := "a"
+@export var height_tiles := 3
+@export var show_placeholder := true
 
-const TILE := 32.0                      # cỡ một ô: 32 pixel
+const TILE := 32.0
 
-var is_open := false                    # cửa đang mở hay đóng
+var is_open := false
 
 
-## Tạo hình va chạm theo chiều cao, nghe tín hiệu nút từ Level.
 func _ready() -> void:
-	var shape := RectangleShape2D.new()         # hình chữ nhật cho va chạm
-	shape.size = Vector2(TILE, height_tiles * TILE)   # rộng 1 ô, cao height_tiles ô
-	$Shape.shape = shape                        # gán hình cho node Shape
-	$Shape.position = shape.size / 2.0          # dời hình để gốc ở góc trên trái
-	var level := Level.of(self)                 # tìm màn chơi chứa cửa này
-	if level:                                   # có màn thì
-		level.channel_changed.connect(_on_channel_changed)   # nghe tín hiệu nút bật / tắt
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(TILE, height_tiles * TILE)
+	$Shape.shape = shape
+	$Shape.position = shape.size / 2.0
+	var level := Level.of(self)
+	if level:
+		level.channel_changed.connect(_on_channel_changed)
 
 
-# Có nút bật / tắt: nếu đúng kênh thì mở / đóng cửa.
 func _on_channel_changed(ch: String, on: bool) -> void:
-	if ch != channel:                           # không phải kênh của mình thì bỏ qua
+	if ch != channel:
 		return
-	is_open = on                                # nút bật = cửa mở
-	$Shape.set_deferred("disabled", on)    # mở cửa = tắt va chạm
-	queue_redraw()                              # vẽ lại cửa
+	is_open = on
+	$Shape.set_deferred("disabled", on)
+	queue_redraw()
 
 
-## Hình tạm: cửa song sắt màu theo kênh, mở thì mờ đi.
 func _draw() -> void:
-	if not show_placeholder:                    # tắt hình tạm thì không vẽ
+	if not show_placeholder:
 		return
-	var color := Level.channel_color(channel)   # màu theo kênh
-	var a := 0.18 if is_open else 1.0           # độ đậm: mở thì mờ đi
-	var h := height_tiles * TILE                # chiều cao cửa (pixel)
-	# nền cửa: màu kênh tối, nửa trong suốt
+	var color := Level.channel_color(channel)
+	var a := 0.18 if is_open else 1.0
+	var h := height_tiles * TILE
 	draw_rect(Rect2(4, 0, TILE - 8, h), Color(color.darkened(0.6), 0.5 * a))
-	for x in [8.0, 16.0, 24.0]:                 # 3 song sắt dọc
-		draw_line(Vector2(x, 0), Vector2(x, h), Color(color, a), 3.0)   # vẽ một song sắt
-	# viền ngoài của cửa
+	for x in [8.0, 16.0, 24.0]:
+		draw_line(Vector2(x, 0), Vector2(x, h), Color(color, a), 3.0)
 	draw_rect(Rect2(2, 0, TILE - 4, h), Color(color.darkened(0.3), a), false, 2.0)

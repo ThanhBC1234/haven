@@ -1,48 +1,43 @@
 extends Node
-## Kiểm tra tự động các cơ chế. Chạy trong thư mục project:
-##   godot --headless --fixed-fps 60 --path . res://tests/smoke.tscn
-## Không dùng --headless và thêm `-- --shots=<thư mục>` để lưu ảnh toàn cảnh từng màn.
 
 var failures := 0
 var shots_dir := ""
 var hurts := 0
-var trial_info := ""                    # ghi chú của lần thử dung sai gần nhất (để in khi chỉnh màn)
-var bot_seed_offset := 0               # cộng vào hạt giống của các mục bot (godot ... -- --bot-seed=N): thử xem mục nào mong manh với hạt giống khác
+var trial_info := ""
+var bot_seed_offset := 0
 
 
-## Chạy lần lượt các kiểm tra; in "ok" hoặc "FAIL" cho từng mục.
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shots="):
 			shots_dir = a.trim_prefix("--shots=")
 		if a.begins_with("--bot-seed="):
 			bot_seed_offset = int(a.trim_prefix("--bot-seed="))
-	Game.save_enabled = false                      # không ghi đè file lưu thật của người chơi
-	if OS.get_cmdline_user_args().has("--only-items"):   # lúc đang làm vật phẩm: chạy riêng phần này cho nhanh (godot ... -- --only-items)
+	Game.save_enabled = false
+	if OS.get_cmdline_user_args().has("--only-items"):
 		await _brawl_item_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
 
-	if OS.get_cmdline_user_args().has("--only-chained"):   # lúc đang làm chế độ Chained: chạy riêng phần này cho nhanh (godot ... -- --only-chained)
+	if OS.get_cmdline_user_args().has("--only-chained"):
 		await _chained_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
 
-	if OS.get_cmdline_user_args().has("--only-chained-levels"):   # chỉ chạy phần màn 2, màn 3 và chuyển màn của Chained (godot ... -- --only-chained-levels)
+	if OS.get_cmdline_user_args().has("--only-chained-levels"):
 		await _chained_levels_23_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
 
-	if OS.get_cmdline_user_args().has("--only-bot"):     # lúc đang làm bot: chạy riêng phần này cho nhanh (godot ... -- --only-bot)
+	if OS.get_cmdline_user_args().has("--only-bot"):
 		await _brawl_bot_checks()
 		print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 		get_tree().quit(1 if failures > 0 else 0)
 		return
 
-	# --- Menu ---
 	var menu: Control = load("res://scenes/menu.tscn").instantiate()
 	add_child(menu)
 	await _frames(3)
@@ -64,7 +59,6 @@ func _ready() -> void:
 	await _shot("00_menu")
 	menu.queue_free()
 
-	# --- Từng màn dựng được, bóng đứng trên đất, có 3 sao và đích ---
 	for i in LevelData.LEVELS.size():
 		var level := _make_level(LevelData.LEVELS[i]["map"])
 		var ball := _make_ball(level, level.start_position)
@@ -89,7 +83,6 @@ func _ready() -> void:
 		level.queue_free()
 		await _frames(2)
 
-	# --- Các đoạn vô tận đúng quy tắc ghép nối ---
 	for seg in [{"name": "Start", "map": SegmentData.START}] + SegmentData.SEGMENTS:
 		var rows: PackedStringArray = []
 		for line in String(seg["map"]).split("
@@ -108,7 +101,6 @@ func _ready() -> void:
 				ok = false
 		_expect(ok, "segment '%s': 18 rows, O at column 2, flat joinable ends, no crates/doors" % seg["name"])
 
-	# --- Giữ D: nghiêng phải, bấm nhảy: nhảy lên bên phải ---
 	var flat := "#..........................#\n#..........................#\n#..........................#\n#..O.......................#\n############################"
 	var lv := _make_level(flat)
 	var b := _make_ball(lv, lv.start_position)
@@ -124,20 +116,19 @@ func _ready() -> void:
 	await _frames(10)
 	_expect(b.global_position.x > x0 + 30 and b.linear_velocity.y < 0.0, "holding D then pressing jump jumps up-right")
 	var vy_before := b.linear_velocity.y
-	b.jump(1, 1.0)                              # đang bay: không nhảy thêm được
+	b.jump(1, 1.0)
 	await _frames(2)
 	_expect(b.linear_velocity.y >= vy_before, "cannot jump again in mid-air")
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Giữ A: nhảy sang trái ---
 	lv = _make_level(flat)
 	b = _make_ball(lv, lv.start_position + Vector2(400, 0))
 	await _frames(60)
 	x0 = b.global_position.x
 	Input.action_press("left")
 	await _frames(15)
-	Input.action_release("left")                   # thả A mà không bấm nhảy: hủy
+	Input.action_release("left")
 	await _frames(20)
 	_expect(b.on_ground and absf(b.global_position.x - x0) < 4.0 and b.charge_dir == 0, "letting go of A without jumping cancels the jump")
 	Input.action_press("left")
@@ -150,7 +141,7 @@ func _ready() -> void:
 	_expect(b.global_position.x < x0 - 20, "holding A then pressing jump jumps left")
 	await _frames(90)
 	x0 = b.global_position.x
-	Input.action_press("jump")                     # không giữ A/D: nhảy thẳng lên
+	Input.action_press("jump")
 	await _frames(1)
 	Input.action_release("jump")
 	await _frames(10)
@@ -158,7 +149,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Rơi xuống nảy như bóng thật: các lần nảy thấp dần rồi đứng yên ---
 	lv = _make_level("#.....#\n" .repeat(8) + "#..O..#\n#######")
 	b = _make_ball(lv, Vector2(112, 40))
 	var ground := lv.size.y - 32.0 - b.radius
@@ -180,7 +170,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Dẫm quái từ trên: quái chết, bóng không bị thương ---
 	lv = _make_level("#...........#\n#....O......#\n#...........#\n#...........#\n#....e......#\n#############")
 	b = _make_ball(lv, lv.start_position)
 	await _frames(60)
@@ -188,7 +177,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Quái đi tới đụng ngang: bóng bị thương ---
 	hurts = 0
 	lv = _make_level("#..............#\n#..O.......e...#\n################")
 	b = _make_ball(lv, lv.start_position)
@@ -197,7 +185,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Gai ---
 	hurts = 0
 	lv = _make_level("#.....#\n#..O..#\n#.....#\n#..^..#\n#######")
 	b = _make_ball(lv, lv.start_position)
@@ -206,7 +193,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Thùng rơi lên nút thì cửa mở ---
 	lv = _make_level("#.........#\n#..x......#\n#.........#\n#..a...A..#\n##########")
 	await _frames(60)
 	var door: Door = _first(lv, Door)
@@ -214,7 +200,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Bệ di chuyển ---
 	lv = _make_level("#..........#\n#.===...>..#\n#..........#")
 	var plat: MovingPlatform = _first(lv, MovingPlatform)
 	var px := plat.position.x
@@ -223,7 +208,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Lò xo ---
 	lv = _make_level("#.....#\n#..O..#\n#.....#\n#.....#\n#..T..#\n#######")
 	b = _make_ball(lv, lv.start_position)
 	var lowest_vy := 0.0
@@ -234,7 +218,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Bập bênh nghiêng khi bóng rơi lên một đầu ---
 	lv = _make_level("#.........#\n#.....O...#\n#.........#\n#.........#\n#....S....#\n#.........#\n###########")
 	b = _make_ball(lv, lv.start_position + Vector2(40, 0))
 	await _frames(60)
@@ -244,7 +227,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Thùng về chỗ cũ khi gọi reset (dùng khi hồi sinh) ---
 	lv = _make_level("#..........#
 #..x.......#
 ############")
@@ -260,14 +242,13 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Dốc: là mặt đất thật (đáp lên được), dốc đứng thì trượt xuống ---
 	hurts = 0
 	lv = _make_level("#........#
 #..O.....#
 #........#
 #..12##..#
 ##########")
-	b = _make_ball(lv, Vector2(144, 80))            # thả nhẹ ngay trên nửa cao của dốc thoải (ô "2")
+	b = _make_ball(lv, Vector2(144, 80))
 	await _frames(15)
 	_expect(b.on_ground and b.global_position.y < 100.0, "a gentle slope is solid ground (y=%.0f)" % b.global_position.y)
 	lv.queue_free()
@@ -283,7 +264,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Trái tim, khiên ---
 	var hearts := [0]
 	lv = _make_level("#.....#
 #..O..#
@@ -310,7 +290,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Jump boost: nhặt mũi tên xanh thì nhảy cao hơn ---
 	lv = _make_level("#.....#
 " .repeat(10) + "#..O..#
 #..j..#
@@ -334,7 +313,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Súng: nhặt được đạn, bắn hạ quái ---
 	lv = _make_level("#..............#
 #..O...........#
 #..g........e..#
@@ -349,7 +327,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Boss: chỉ lăn trên mặt đất; đụng ngang thì bị thương; dẫm đầu / bắn thì mất máu; hết máu thì cổng mở ---
 	hurts = 0
 	lv = _make_level("#..............................#
 #..............................#
@@ -380,10 +357,10 @@ func _ready() -> void:
 	lv.add_child(shot)
 	await _frames(8)
 	_expect(boss.hp == hp0 - 1, "a horizontal bullet hits the boss")
-	b.teleport(boss.global_position + Vector2(0, -110))   # thả người chơi rơi lên đầu boss
+	b.teleport(boss.global_position + Vector2(0, -110))
 	boss.state = Boss.State.DIZZY
 	boss._timer = 5.0
-	await _frames(3)                              # chờ bóng rời khỏi thân boss rồi mới bỏ miễn sát thương
+	await _frames(3)
 	b.invuln = 0.0
 	hurts = 0
 	var hp1 := boss.hp
@@ -396,7 +373,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Thanh máu boss trên HUD (màn Boss Arena) ---
 	Game.level_index = LevelData.LEVELS.size() - 1
 	var arena: Node = load("res://scenes/play.tscn").instantiate()
 	add_child(arena)
@@ -405,19 +381,18 @@ func _ready() -> void:
 	await _frames(40)
 	_expect(arena.hud._boss_max > 0, "HUD shows the boss health bar")
 	await _shot("14_boss_arena")
-	_first(arena.level, Boss).queue_free()        # boss bị xóa mà chưa bị hạ (vô tận: đoạn đường phía sau bị dọn)
+	_first(arena.level, Boss).queue_free()
 	await _frames(3)
 	_expect(arena.hud._boss_max == 0, "boss health bar disappears when the boss is removed")
 	arena.queue_free()
 	await _frames(2)
 
-	# --- Chế độ vô tận: dựng đoạn phía trước, xóa đoạn đã qua, điểm, hệ số nhân, sao, thua ---
 	var endless: Node = load("res://scenes/endless.tscn").instantiate()
 	add_child(endless)
 	await _frames(20)
 	_expect(endless.chunks.size() >= 2 and endless._end_x > endless.ball.global_position.x + 2000.0, "endless builds segments ahead of the player")
 	var first_chunk: Level = endless.chunks[0]
-	for k in 7:                                    # nhảy cóc tới đầu đoạn xa nhất vài lần
+	for k in 7:
 		var far: Level = endless.chunks[-1]
 		endless.ball.teleport(far.position + far.start_position)
 		await _frames(12)
@@ -438,17 +413,15 @@ func _ready() -> void:
 	endless.queue_free()
 	await _frames(2)
 
-	# --- Dịch chuyển (hồi sinh) băng qua vực và đất: bóng phải đứng yên ở chỗ mới, không bị kéo ngược về mép vực ---
 	lv = _make_level("#..............#\n#..............#\n#..O...........#\n#####....#######\n#####....#######")
 	b = _make_ball(lv, Vector2(7 * 32, 0))
-	await _frames(25)                             # đang rơi nhanh trong vực
+	await _frames(25)
 	b.teleport(lv.start_position)
 	await _frames(40)
 	_expect(b.global_position.distance_to(lv.start_position) < 6.0 and b.on_ground, "teleport across a pit keeps the ball at the target (%s)" % b.global_position)
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Đứng trên gai khi đang miễn sát thương: hết miễn thì vẫn bị thương ---
 	hurts = 0
 	lv = _make_level("#.....#\n#..O..#\n#..^..#\n#######")
 	b = _make_ball(lv, lv.start_position)
@@ -460,7 +433,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Quái quay đầu trước gai (không đi xuyên qua bãi gai) ---
 	lv = _make_level("#............#\n#.^...e...^..#\n##############")
 	var walker: Enemy = _first(lv, Enemy)
 	var walk_min := walker.global_position.x
@@ -473,7 +445,6 @@ func _ready() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Màn 2: nhảy vòng qua cờ lưu vẫn lưu; rơi vực sau cờ thì hồi sinh ở cờ và đứng yên, không rơi tiếp ---
 	Game.level_index = 1
 	var play2: Node = load("res://scenes/play.tscn").instantiate()
 	add_child(play2)
@@ -482,12 +453,12 @@ func _ready() -> void:
 	for c in play2.level.get_children():
 		if c is Pickup and c.kind == "checkpoint":
 			flag_x = c.global_position.x
-	play2.ball.teleport(Vector2(flag_x - 96, 496 - 128))   # bay ngang qua phía trên cờ, cao 4 ô
+	play2.ball.teleport(Vector2(flag_x - 96, 496 - 128))
 	await _frames(2)
 	play2.ball.linear_velocity = Vector2(420, -150)
 	await _frames(40)
 	_expect(absf(play2.respawn_position.x - flag_x) < 1.0, "jumping over a checkpoint flag still activates it")
-	play2.ball.teleport(Vector2(flag_x + 6 * 32, 520))    # rơi xuống vực ngay sau cờ
+	play2.ball.teleport(Vector2(flag_x + 6 * 32, 520))
 	await _frames(240)
 	_expect(play2.lives == 2 and not play2.ball.dead, "falling into the pit costs exactly one life")
 	_expect(play2.ball.global_position.distance_to(play2.respawn_position) < 6.0 and play2.ball.on_ground,
@@ -500,7 +471,6 @@ func _ready() -> void:
 	play2.queue_free()
 	await _frames(2)
 
-	# --- Cảnh chơi: bị thương mất mạng rồi hồi sinh; chạm đích hiện bảng qua màn ---
 	Game.level_index = 0
 	var play: Node = load("res://scenes/play.tscn").instantiate()
 	add_child(play)
@@ -519,19 +489,18 @@ func _ready() -> void:
 	_expect(play.hud._panel != null and play.hud._panel.visible, "finish shows the level-complete panel")
 	await _shot("11_complete")
 
-	await _two_player_checks()                     # nền tảng cho chế độ 2 người chơi
-	await _brawl_checks()                          # chế độ đấu 2 người (Bounce Brawl)
-	await _brawl_sudden_death_checks()             # SUDDEN DEATH: hàng gai dâng khi sàn đã kín gai mà vẫn chưa ai ghi điểm
-	await _brawl_event_checks()                    # sự kiện ngẫu nhiên của chế độ đấu (roulette, 6 sự kiện)
-	await _brawl_item_checks()                     # vật phẩm troll, vương miện người dẫn điểm, câu châm chọc
-	await _brawl_bot_checks()                      # máy (bot) chơi thay người chơi 2
-	await _chained_checks()                        # chế độ Chained: hai người bị trói bằng dây, sao xâu trên dây
+	await _two_player_checks()
+	await _brawl_checks()
+	await _brawl_sudden_death_checks()
+	await _brawl_event_checks()
+	await _brawl_item_checks()
+	await _brawl_bot_checks()
+	await _chained_checks()
 
 	print("RESULT: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILED" % failures))
 	get_tree().quit(1 if failures > 0 else 0)
 
 
-## Dựng một màn từ bản đồ chữ.
 func _make_level(map: String) -> Level:
 	var level := Level.new()
 	add_child(level)
@@ -539,7 +508,6 @@ func _make_level(map: String) -> Level:
 	return level
 
 
-## Thả bóng vào màn và đếm số lần bị thương.
 func _make_ball(level: Level, pos: Vector2) -> Ball:
 	var ball: Ball = load("res://scenes/ball.tscn").instantiate()
 	ball.position = pos
@@ -574,24 +542,20 @@ func _frames(n: int) -> void:
 		await get_tree().physics_frame
 
 
-## Thả mọi phím (kể cả phím riêng của người chơi 1 và 2) để mục kiểm tra sau không bị dính phím.
 func _release_all_keys() -> void:
-	for action in Game.KEYS:                          # duyệt mọi hành động đã cài
-		Input.action_release(action)                  # thả phím
+	for action in Game.KEYS:
+		Input.action_release(action)
 
 
-## Nền tảng 2 người chơi: phím riêng, đảo phím, va chạm bóng-bóng, dẫm, hất, đổi kích thước, dẹt, đạn đẩy lùi, ai nhặt sao.
 func _two_player_checks() -> void:
 	var flat := "#..........................#\n#..........................#\n#..........................#\n#..O.......................#\n############################"
 	var tall := "#......................#\n".repeat(9) + "#..O...................#\n#######################"
 
-	# --- Phím riêng của từng người chơi đã được cài ---
 	var all_keys := true
 	for action in ["p1_left", "p1_right", "p1_jump", "p1_use", "p2_left", "p2_right", "p2_jump", "p2_use"]:
 		all_keys = all_keys and InputMap.has_action(action)
 	_expect(all_keys and InputMap.has_action("left") and InputMap.has_action("shoot"), "per-player key actions exist next to the old ones")
 
-	# --- Hai bóng nghe phím riêng, độc lập nhau ---
 	var lv := _make_level(flat)
 	var a := _make_ball(lv, lv.start_position)
 	var b := _make_ball(lv, lv.start_position + Vector2(400, 0))
@@ -604,7 +568,7 @@ func _two_player_checks() -> void:
 	await _frames(60)
 	var a_x := a.global_position.x
 	var b_x := b.global_position.x
-	Input.action_press("right")                    # phím đơn: không được điều khiển bóng có tiền tố
+	Input.action_press("right")
 	Input.action_press("left")
 	await _frames(15)
 	_expect(a.charge_dir == 0 and b.charge_dir == 0, "plain left/right do not drive balls that use player keys")
@@ -633,7 +597,6 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Phím "use": chỉ phát tín hiệu, không tự bắn ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	b = _make_ball(lv, lv.start_position + Vector2(400, 0))
@@ -651,12 +614,12 @@ func _two_player_checks() -> void:
 	Input.action_release("p1_use")
 	await _frames(3)
 	_expect(not a.is_use_held(), "is_use_held is false after release")
-	Input.action_press("p2_use")                   # bóng 2 chưa gọi set_player: không phản ứng
-	Input.action_press("shoot")                    # bóng 1 có tiền tố: phím bắn đơn không bắn
+	Input.action_press("p2_use")
+	Input.action_press("shoot")
 	await _frames(3)
 	_expect(uses[0] == 1 and a.ammo == 5, "use_pressed ignores other players' keys; the plain shoot key does not fire a prefixed ball")
 	_release_all_keys()
-	b.facing = 1                                   # bóng không tiền tố vẫn bắn bằng phím "shoot" như cũ
+	b.facing = 1
 	Input.action_press("shoot")
 	await _frames(2)
 	_expect(b.ammo == 4, "a ball without prefix still shoots with the shoot key")
@@ -664,7 +627,6 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Đảo phím ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	await _frames(60)
@@ -693,7 +655,6 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Hoán đổi tiền tố phím lúc đang chơi: không kẹt lực tích ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	b = _make_ball(lv, lv.start_position + Vector2(400, 0))
@@ -722,7 +683,6 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Bóng chỉ va chạm nhau khi bật ---
 	for enabled in [false, true]:
 		lv = _make_level(flat)
 		a = _make_ball(lv, lv.start_position)
@@ -730,9 +690,9 @@ func _two_player_checks() -> void:
 		a.set_collide_with_balls(enabled)
 		b.set_collide_with_balls(enabled)
 		await _frames(60)
-		a.teleport(b.global_position + Vector2(-50, -20))   # bóng 1 lơ lửng bên trái bóng 2, cùng tầm
+		a.teleport(b.global_position + Vector2(-50, -20))
 		await _frames(2)
-		a.linear_velocity = Vector2(700, 0)        # rồi lao ngang vào bóng 2 (đang bay nên ma sát đất chưa làm chậm)
+		a.linear_velocity = Vector2(700, 0)
 		await _frames(30)
 		if enabled:
 			_expect(a.global_position.x < b.global_position.x, "balls block each other when ball collision is on (%.0f < %.0f)" % [a.global_position.x, b.global_position.x])
@@ -748,16 +708,15 @@ func _two_player_checks() -> void:
 	_expect(a.collision_mask == 9, "set_collide_with_balls(false) restores the mask")
 	a.free()
 
-	# --- Dẫm đầu: stomped phát đúng một lần mỗi lần đáp, đúng nạn nhân ---
 	hurts = 0
 	lv = _make_level(tall)
 	var ground := lv.size.y - 32.0 - 15.0
 	b = _make_ball(lv, Vector2(400, ground))
-	a = _make_ball(lv, Vector2(404, ground - 160.0))   # lệch vài pixel để không đứng cân bằng trên đỉnh đầu
+	a = _make_ball(lv, Vector2(404, ground - 160.0))
 	a.set_collide_with_balls(true)
 	b.set_collide_with_balls(true)
-	var stomps: Array[Ball] = []                   # nạn nhân của từng cú dẫm của bóng 1
-	var stomps_b := [0]                            # số lần bóng 2 phát stomped
+	var stomps: Array[Ball] = []
+	var stomps_b := [0]
 	a.stomped.connect(func(victim: Ball) -> void: stomps.append(victim))
 	b.stomped.connect(func(_victim: Ball) -> void: stomps_b[0] += 1)
 	await _frames(40)
@@ -767,7 +726,7 @@ func _two_player_checks() -> void:
 	_expect(hurts == 0, "stomping a ball does not hurt anybody by itself")
 	lv.queue_free()
 	await _frames(2)
-	lv = _make_level(tall)                         # chạm nhẹ (không phải rơi) thì không tính là dẫm
+	lv = _make_level(tall)
 	b = _make_ball(lv, Vector2(400, ground))
 	a = _make_ball(lv, Vector2(404, ground - 40.0))
 	a.set_collide_with_balls(true)
@@ -778,7 +737,7 @@ func _two_player_checks() -> void:
 	_expect(stomps.size() == 0, "a short drop onto another ball is below the stomp speed threshold")
 	lv.queue_free()
 	await _frames(2)
-	lv = _make_level(tall)                         # bóng bị dẫm từ phía dưới / bên cạnh không phải là dẫm
+	lv = _make_level(tall)
 	b = _make_ball(lv, Vector2(300, ground))
 	a = _make_ball(lv, Vector2(364, ground))
 	a.set_collide_with_balls(true)
@@ -787,13 +746,12 @@ func _two_player_checks() -> void:
 	stomps.clear()
 	a.stomped.connect(func(victim: Ball) -> void: stomps.append(victim))
 	b.stomped.connect(func(victim: Ball) -> void: stomps.append(victim))
-	b.linear_velocity = Vector2(300, 0)            # hai bóng đụng ngang nhau
+	b.linear_velocity = Vector2(300, 0)
 	await _frames(40)
 	_expect(stomps.size() == 0, "bumping sideways is not a stomp")
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Hất ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	await _frames(60)
@@ -804,13 +762,12 @@ func _two_player_checks() -> void:
 	await _frames(120)
 	a_x = a.global_position.x
 	a.knockback(Vector2(300, -200))
-	a.teleport(a.global_position)                  # teleport xoá cú hất đang chờ
+	a.teleport(a.global_position)
 	await _frames(20)
 	_expect(absf(a.global_position.x - a_x) < 4.0 and a.on_ground, "teleport clears a pending knockback")
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Đổi kích thước: to, nhỏ, về 1.0; bóng vẫn đứng trên đất ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	b = _make_ball(lv, lv.start_position + Vector2(300, 0))
@@ -833,7 +790,7 @@ func _two_player_checks() -> void:
 	await _frames(90)
 	_expect(a.radius == 15.0 and a.get_node("Shape").shape.radius == 15.0 and a.mass == 1.0 and absf(_sprite_scale(a) - 2.0) < 0.001, "set_size(1.0) restores radius, shape, mass and sprite exactly")
 	_expect(a.on_ground and absf(a.global_position.y - (floor_y - 15.0)) < 3.0, "restored ball rests on the ground (y=%.1f, want %.1f)" % [a.global_position.y, floor_y - 15.0])
-	a.set_size(3.0)                                # to ra giữa không trung rồi rơi xuống: không xuyên đất
+	a.set_size(3.0)
 	a.teleport(Vector2(200, 40))
 	await _frames(120)
 	_expect(a.on_ground and absf(a.global_position.y - (floor_y - 45.0)) < 3.0, "a 3x ball dropped from above stays on the ground (y=%.1f, want %.1f)" % [a.global_position.y, floor_y - 45.0])
@@ -841,7 +798,6 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Đổi kích thước ngay trong tín hiệu của vật nhặt (đang xử lý vật lý) ---
 	lv = _make_level("#.....#\n#..O..#\n#..*..#\n#.....#\n#######")
 	a = _make_ball(lv, lv.start_position)
 	lv.star_collected_by.connect(func(by: Ball) -> void: by.set_size(1.5))
@@ -850,7 +806,6 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Dẹt như bánh ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	await _frames(60)
@@ -859,18 +814,17 @@ func _two_player_checks() -> void:
 	a.flatten(0.5)
 	await _frames(15)
 	_expect(spr.scale.y < base_scale.y * 0.4 and spr.scale.x > base_scale.x * 1.4, "flatten squashes the character flat (%s)" % spr.scale)
-	await _frames(40)                              # hết 0.5 giây: bật lại
+	await _frames(40)
 	await _frames(60)
 	_expect(spr.scale.is_equal_approx(base_scale) or (absf(spr.scale.x - base_scale.x) < 0.05 and absf(spr.scale.y - base_scale.y) < 0.05), "flatten springs back to normal (%s)" % spr.scale)
 	_expect(a.on_ground, "flatten does not change the physics")
-	a.set_size(2.0)                                # dẹt kết hợp với kích thước
+	a.set_size(2.0)
 	a.flatten(0.2)
 	await _frames(60)
 	_expect(absf(spr.scale.x - 4.0) < 0.1 and absf(spr.scale.y - 4.0) < 0.1, "flatten and set_size combine and settle back (%s)" % spr.scale)
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Đạn đẩy lùi ---
 	lv = _make_level(flat)
 	a = _make_ball(lv, lv.start_position)
 	b = _make_ball(lv, lv.start_position + Vector2(200, 0))
@@ -880,7 +834,7 @@ func _two_player_checks() -> void:
 	hurts = 0
 	a.ammo = 5
 	a.facing = 1
-	a.shoot()                                      # đạn thường (bullet_knockback = 0): xuyên qua bóng 2, không hất
+	a.shoot()
 	await _frames(40)
 	_expect(absf(b.global_position.x - b_x) < 3.0 and absf(a.global_position.x - a_x) < 3.0, "a normal bullet does not push balls")
 	await _frames(40)
@@ -891,7 +845,7 @@ func _two_player_checks() -> void:
 	_expect(absf(a.global_position.x - a_x) < 3.0, "the shooter is not pushed")
 	_expect(hurts == 0 and not b.dead, "the knockback bullet does no damage")
 	await _frames(100)
-	var shot: Area2D = load("res://scenes/objects/player_bullet.tscn").instantiate()   # đạn đặt ngay trên người bắn: phải bỏ qua
+	var shot: Area2D = load("res://scenes/objects/player_bullet.tscn").instantiate()
 	_expect(shot.collision_mask == 37, "a normal bullet keeps its original collision mask")
 	shot.direction = Vector2.RIGHT
 	shot.shooter = a
@@ -905,54 +859,49 @@ func _two_player_checks() -> void:
 	lv.queue_free()
 	await _frames(2)
 
-	# --- Ai nhặt sao ---
 	lv = _make_level("#.......#\n#..O....#\n#..*....#\n#.......#\n#########")
-	var star_log := []                             # người nhặt từng ngôi sao
+	var star_log := []
 	var old_count := [0]
 	lv.star_collected_by.connect(func(by: Ball) -> void: star_log.append(by))
 	lv.star_collected.connect(func() -> void: old_count[0] += 1)
-	a = _make_ball(lv, lv.start_position + Vector2(128, 0))   # bóng 1 đứng xa ngôi sao
-	b = _make_ball(lv, lv.start_position)                     # bóng 2 rơi trúng ngôi sao
+	a = _make_ball(lv, lv.start_position + Vector2(128, 0))
+	b = _make_ball(lv, lv.start_position)
 	a.set_player(1)
 	b.set_player(2)
 	await _frames(60)
 	_expect(star_log.size() == 1 and star_log[0] == b and old_count[0] == 1, "star_collected_by names the ball that took the star, star_collected still fires")
-	lv.collect_star()                              # gọi kiểu cũ, không kèm bóng
+	lv.collect_star()
 	_expect(star_log.size() == 2 and star_log[1] == null and old_count[0] == 2, "collect_star() without a ball still works (collector is null)")
 	lv.queue_free()
 	await _frames(2)
 
 
-## Dựng cảnh đấu 2 người với đấu trường số `arena`, rút ngắn mọi thời gian chờ để test chạy nhanh (chưa chờ hết phần giới thiệu).
 func _make_brawl(arena := 0, intro := 0.2, with_events := false, with_items := false) -> Brawl:
 	var br: Brawl = load("res://scenes/brawl.tscn").instantiate()
-	br.arena_index = arena                          # chọn đấu trường cố định cho dễ đặt bóng
-	br.intro_seconds = intro                        # giới thiệu ngắn
-	br.respawn_delay = 0.3                          # hồi sinh nhanh
-	br.win_panel_delay = 0.2                        # bảng thắng hiện nhanh
+	br.arena_index = arena
+	br.intro_seconds = intro
+	br.respawn_delay = 0.3
+	br.win_panel_delay = 0.2
 	add_child(br)
-	br.events.enabled = with_events                 # sự kiện ngẫu nhiên tắt trừ khi bài test cần (các bài khác không bị sự kiện chen ngang)
-	br.items.enabled = with_items                   # hộp vật phẩm tự sinh cũng tắt trừ khi bài test cần (give / spawn_box gọi tay vẫn dùng được)
+	br.events.enabled = with_events
+	br.items.enabled = with_items
 	await _frames(2)
 	return br
 
 
-## Chờ hết phần giới thiệu và cho hai bóng đáp xuống đất.
 func _brawl_ready(br: Brawl) -> void:
-	for i in 200:                                   # tối đa 200 khung
+	for i in 200:
 		if br.match_running:
 			break
 		await _frames(1)
-	await _frames(45)                               # cho hai bóng ổn định trên đất
+	await _frames(45)
 
 
-## Chế độ đấu 2 người: dựng cảnh, các đường ghi điểm (dẫm, vực, gai), miễn sát thương, thắng cuộc, gai chống câu giờ, va chạm nảy.
 func _brawl_checks() -> void:
-	for c in get_children():                         # dọn cảnh chơi một mình còn sót lại (cùng một thế giới vật lý, đất của nó sẽ cản bóng)
+	for c in get_children():
 		c.queue_free()
 	await _frames(3)
 
-	# --- Đấu trường hợp lệ: vừa một màn hình, tường bao, đối xứng, O và P đúng một lần ---
 	for i in BrawlData.ARENAS.size():
 		var rows: PackedStringArray = []
 		for line in String(BrawlData.ARENAS[i]["map"]).split("\n"):
@@ -977,7 +926,7 @@ func _brawl_checks() -> void:
 					mirrored = mirrored and mirror == "O"
 				else:
 					mirrored = mirrored and mirror == ch
-		for c in [1, 2, 3, 36, 37, 38]:               # chỗ hai người đứng có đất ở hai hàng cuối
+		for c in [1, 2, 3, 36, 37, 38]:
 			bottom_ground = bottom_ground and rows[rows.size() - 1][c] == "#" and rows[rows.size() - 2][c] == "#"
 		_expect(ok and walls and mirrored and spawns == 2 and bottom_ground, "arena '%s': 40x22, walls, mirrored, one O and one P, ground under the spawns" % BrawlData.ARENAS[i]["name"])
 		var has_pit := false
@@ -986,7 +935,6 @@ func _brawl_checks() -> void:
 			has_pit = has_pit or rows[rows.size() - 1][c] == "."
 		_expect(has_pit and has_spikes, "arena '%s' has a pit and spikes" % BrawlData.ARENAS[i]["name"])
 
-	# --- Cảnh dựng được: hai bóng đúng chỗ, khác phím, đứng yên lúc giới thiệu ---
 	var br := await _make_brawl(0, 0.6)
 	var started := [0]
 	br.match_started.connect(func() -> void: started[0] += 1)
@@ -1001,7 +949,7 @@ func _brawl_checks() -> void:
 	Input.action_press("p2_left")
 	await _frames(12)
 	_expect(a.charge_dir == 0 and b.charge_dir == 0, "players cannot move during the READY... intro")
-	br.kill(b, "pit")                               # lúc giới thiệu không ghi điểm
+	br.kill(b, "pit")
 	_expect(br.scores == [0, 0] and b.visible, "kill() is ignored while the match is not running")
 	_release_all_keys()
 	await _brawl_ready(br)
@@ -1014,39 +962,36 @@ func _brawl_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Dẫm đầu: người dẫm ghi điểm, nạn nhân dẹt rồi hồi sinh sống ở chỗ của mình ---
 	br = await _make_brawl(0)
 	a = br.balls[0]
 	b = br.balls[1]
-	var events := []                                 # mỗi điểm: [người ghi, nạn nhân, nguyên nhân]
+	var events := []
 	br.point_scored.connect(func(scorer: Ball, victim: Ball, cause: String) -> void: events.append([scorer, victim, cause]))
 	await _brawl_ready(br)
 	var b_spawn := br.spawn_points[1]
-	a.teleport(b.global_position + Vector2(3, -170))   # bóng 1 rơi xuống đầu bóng 2
+	a.teleport(b.global_position + Vector2(3, -170))
 	await _frames(45)
 	_expect(br.scores == [1, 0] and events.size() == 1 and events[0][0] == a and events[0][1] == b and events[0][2] == "stomp", "stomping the opponent's head scores for the stomper (%s)" % str(br.scores))
 	_expect(b.dead and b.visible, "the stomped player is still on screen as a pancake")
 	var spr: Node2D = b.get_node("Sprite")
 	_expect(spr.scale.y < spr.scale.x * 0.55, "the stomped player is flattened like a pancake (%s)" % spr.scale)
 	_expect(not a.dead and br.scores[1] == 0, "the stomper stays alive and the victim scores nothing")
-	await _frames(70)                                # dẹt 0.6 giây + hồi sinh 0.3 giây
+	await _frames(70)
 	_expect(not b.dead and b.visible and b.collision_layer == 2 and b.global_position.distance_to(b_spawn) < 40.0, "the victim respawns alive at its own spawn point (%.0f px away)" % b.global_position.distance_to(b_spawn))
 	_expect(b.invuln > 0.0 and events.size() == 1, "the respawned player is briefly invulnerable and no extra point was given")
-	# người vừa hồi sinh (đang miễn sát thương) không bị dẫm lấy điểm
 	a.teleport(b.global_position + Vector2(3, -170))
 	await _frames(45)
 	_expect(br.scores == [1, 0] and not b.dead and events.size() == 1, "an invulnerable player cannot be stomped for a point (%s)" % str(br.scores))
 	br.queue_free()
 	await _frames(2)
 
-	# --- Rơi xuống vực: đối thủ ghi điểm ---
 	br = await _make_brawl(0)
 	a = br.balls[0]
 	b = br.balls[1]
 	events = []
 	br.point_scored.connect(func(scorer: Ball, victim: Ball, cause: String) -> void: events.append([scorer, victim, cause]))
 	await _brawl_ready(br)
-	a.teleport(Vector2(640, 450))                    # giữa vực
+	a.teleport(Vector2(640, 450))
 	await _frames(70)
 	_expect(br.scores == [0, 1] and events.size() == 1 and events[0][0] == b and events[0][1] == a and events[0][2] == "pit", "falling into the pit scores for the opponent (%s)" % str(br.scores))
 	await _frames(50)
@@ -1054,27 +999,25 @@ func _brawl_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Chạm gai: đối thủ ghi điểm; đang miễn sát thương thì không sao ---
 	br = await _make_brawl(0)
 	a = br.balls[0]
 	b = br.balls[1]
 	events = []
 	br.point_scored.connect(func(scorer: Ball, victim: Ball, cause: String) -> void: events.append([scorer, victim, cause]))
 	await _brawl_ready(br)
-	b.invuln = 3.0                                   # miễn sát thương: gai không giết
-	b.teleport(Vector2(416, 540))                    # rơi xuống hai ô gai ở cột 12-13
+	b.invuln = 3.0
+	b.teleport(Vector2(416, 540))
 	await _frames(40)
 	_expect(br.scores == [0, 0] and not b.dead, "an invulnerable player is not killed by spikes")
 	b.invuln = 0.0
-	b.teleport(Vector2(1168, 600))                   # bóng 2 đi chỗ khác, khỏi dính gai khi hết miễn sát thương
+	b.teleport(Vector2(1168, 600))
 	await _frames(20)
-	a.teleport(Vector2(416, 540))                    # bóng 1 rơi xuống gai
+	a.teleport(Vector2(416, 540))
 	await _frames(40)
 	_expect(br.scores == [0, 1] and events.size() == 1 and events[0][0] == b and events[0][1] == a and events[0][2] == "spikes", "touching spikes scores for the opponent (%s)" % str(br.scores))
 	br.queue_free()
 	await _frames(2)
 
-	# --- Đạt WIN_SCORE: hết trận, bảng thắng, không ghi thêm điểm ---
 	for winner_index in [0, 1]:
 		br = await _make_brawl(1)
 		a = br.balls[0]
@@ -1095,31 +1038,30 @@ func _brawl_checks() -> void:
 		_expect(br.hud.win_panel != null and br.hud.win_panel.visible and ("PLAYER %d WINS!" % (winner_index + 1)) in texts, "the win panel shows PLAYER %d WINS! (%s)" % [winner_index + 1, str(texts)])
 		_expect(br.hud.rematch_button != null and br.hud.rematch_button.text == "Rematch" and br.hud.menu_button != null and br.hud.menu_button.text == "Menu", "the win panel has Rematch and Menu buttons")
 		var before: Array[int] = br.scores.duplicate()
-		br.kill(winner, "pit")                       # trận đã hết: không ghi thêm
+		br.kill(winner, "pit")
 		winner.teleport(Vector2(640, 450))
-		await _frames(100)                           # người thắng rơi xuống vực cũng không ai ghi điểm
+		await _frames(100)
 		_expect(br.scores == before and overs.size() == 1, "no more points are scored after the match is over (%s)" % str(br.scores))
 		br.queue_free()
 		await _frames(2)
 
-	# --- Gai chống câu giờ: hết giờ thì mọc từ hai bên vào giữa, có điểm thì mất ---
 	br = await _make_brawl(0)
-	br.stall_timeout = 0.5                           # rút ngắn từ 30 giây
+	br.stall_timeout = 0.5
 	br.stall_step = 0.25
 	await _brawl_ready(br)
-	br.kill(br.balls[1], "pit")                      # có điểm: tính lại giờ ngay bây giờ
+	br.kill(br.balls[1], "pit")
 	await _frames(2)
 	var base_spikes := _count(br.level, Spikes)
 	_expect(br.stall_spikes.is_empty() and not br.stall_active, "no stall spikes before the timeout")
-	await _frames(33)                                # 0.5 giây hết giờ: gai đầu tiên mọc ở hai đầu
+	await _frames(33)
 	var xs: Array[float] = []
 	for s in br.stall_spikes:
 		xs.append(s.global_position.x)
 	_expect(br.stall_active and br.stall_spikes.size() >= 2 and xs.min() < 320.0 and xs.max() > 960.0 and _count(br.level, Spikes) == base_spikes + br.stall_spikes.size(), "stall spikes appear on both ends of the floor after the timeout (%d spikes)" % br.stall_spikes.size())
 	var first_count := br.stall_spikes.size()
-	await _frames(15)                                # nhịp thứ hai (0.75 giây); nhịp thứ ba (cột 3 và 36, chỗ hai người đứng) chưa tới
+	await _frames(15)
 	_expect(br.stall_spikes.size() > first_count, "more stall spikes creep in over time (%d -> %d)" % [first_count, br.stall_spikes.size()])
-	br.kill(br.balls[1] if not br.balls[1].dead else br.balls[0], "pit")   # có điểm: gai biến mất
+	br.kill(br.balls[1] if not br.balls[1].dead else br.balls[0], "pit")
 	await _frames(3)
 	_expect(br.stall_spikes.is_empty() and not br.stall_active and _count(br.level, Spikes) == base_spikes, "scoring a point removes the stall spikes")
 	await _frames(20)
@@ -1129,16 +1071,15 @@ func _brawl_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Va chạm giữa hai bóng nảy và thô bạo hơn bình thường ---
 	br = await _make_brawl(0)
 	a = br.balls[0]
 	b = br.balls[1]
 	await _brawl_ready(br)
-	b.teleport(Vector2(250, 600))                    # bóng 2 đứng trên mặt đất bên trái
+	b.teleport(Vector2(250, 600))
 	await _frames(30)
 	a.teleport(b.global_position + Vector2(-50, -20))
 	await _frames(2)
-	a.linear_velocity = Vector2(500, 0)              # bóng 1 lao vào bóng 2
+	a.linear_velocity = Vector2(500, 0)
 	var peak_b := 0.0
 	var min_a := 0.0
 	for i in 20:
@@ -1151,14 +1092,11 @@ func _brawl_checks() -> void:
 	await _frames(2)
 
 
-## Các thông số vật lý / điều khiển mà sự kiện có thể đổi của một quả bóng: [trọng lực, độ nảy, ma sát, đảo phím],
-## ba số đầu nhân 1000 và làm tròn thành số nguyên (Godot lưu float 32 bit nên so sánh số thực trực tiếp sẽ lệch).
 func _ev_props(ball: Ball) -> Array:
 	var m := ball.physics_material_override
 	return [roundi(ball.gravity_scale * 1000.0), roundi(m.bounce * 1000.0), roundi(m.friction * 1000.0), ball.reverse_controls]
 
 
-## Số quả bom (BombMarker) đang nổi trên đầu `ball` (không tính cái đã bị xoá).
 func _bomb_markers(ball: Ball) -> int:
 	var n := 0
 	for c in ball.get_children():
@@ -1167,13 +1105,11 @@ func _bomb_markers(ball: Ball) -> int:
 	return n
 
 
-## Đặt bóng về chỗ xuất phát và chờ đứng yên.
 func _ev_reset_ball(br: Brawl, ball: Ball) -> void:
 	ball.teleport(br.spawn_of(ball))
 	await _frames(50)
 
 
-## Nhảy thẳng lên (độ mạnh 0.5): trả về độ cao đỉnh nhảy (pixel) so với lúc đứng.
 func _ev_apex(br: Brawl, ball: Ball) -> float:
 	await _ev_reset_ball(br, ball)
 	var start_y := ball.global_position.y
@@ -1185,7 +1121,6 @@ func _ev_apex(br: Brawl, ball: Ball) -> float:
 	return start_y - min_y
 
 
-## Thả bóng từ cao 324 pixel: trả về độ cao nảy lên sau lần chạm đất đầu tiên (pixel, so với mặt đất).
 func _ev_rebound(br: Brawl, ball: Ball) -> float:
 	await _ev_reset_ball(br, ball)
 	var ground_y := ball.global_position.y
@@ -1195,13 +1130,12 @@ func _ev_rebound(br: Brawl, ball: Ball) -> float:
 	for i in 160:
 		await _frames(1)
 		if ball.linear_velocity.y < -100.0:
-			rising = true                           # đã chạm đất và đang nảy lên
+			rising = true
 		if rising:
 			min_y = minf(min_y, ball.global_position.y)
 	return ground_y - min_y
 
 
-## Đẩy bóng sang phải 250 px/s rồi để trượt 40 khung: trả về quãng đường trượt (pixel).
 func _ev_slide(br: Brawl, ball: Ball) -> float:
 	await _ev_reset_ball(br, ball)
 	var x0 := ball.global_position.x
@@ -1210,10 +1144,7 @@ func _ev_slide(br: Brawl, ball: Ball) -> float:
 	return ball.global_position.x - x0
 
 
-## Sự kiện ngẫu nhiên: bốc thăm không trùng, từng hiệu ứng thật sự có tác dụng và hoàn tác sạch, hồi sinh giữa sự kiện,
-## bom chuyền / nổ / người cầm chết, không có sự kiện lúc giới thiệu và sau trận, bộ đếm giờ tự bốc thăm + roulette trên HUD.
 func _brawl_event_checks() -> void:
-	# --- Dựng cảnh; chưa bắt đầu trận thì start_event bị bỏ qua ---
 	var br := await _make_brawl(0, 0.3)
 	var a := br.balls[0]
 	var b := br.balls[1]
@@ -1228,7 +1159,6 @@ func _brawl_event_checks() -> void:
 	_expect(ev.active_event == "" and a.gravity_scale == 1.0 and starts.is_empty(), "start_event() is ignored while the match is not running (intro)")
 	await _brawl_ready(br)
 
-	# --- Bốc thăm: không bao giờ trùng sự kiện ngay trước, đủ sáu sự kiện ---
 	var picks: Array[String] = []
 	var seen := {}
 	var never_twice := true
@@ -1240,7 +1170,6 @@ func _brawl_event_checks() -> void:
 		seen[pick] = true
 	_expect(never_twice and seen.size() == 6, "pick_event(): never the same event twice in a row over 400 picks, and all 6 events come up")
 
-	# --- Số đo gốc (trước mọi sự kiện) ---
 	var base := _ev_props(a)
 	var mat_a := a.physics_material_override
 	var mat_b := b.physics_material_override
@@ -1250,7 +1179,6 @@ func _brawl_event_checks() -> void:
 	var slide_normal := await _ev_slide(br, a)
 	print("    (baseline: apex %.0f px, rebound %.0f px, slide %.0f px)" % [apex_normal, rebound_normal, slide_normal])
 
-	# --- LOW GRAVITY: rơi chậm, nhảy cao hơn hẳn; hết sự kiện thì trọng lực về 1 ---
 	ev.start_event("low_gravity")
 	await _frames(2)
 	_expect(ev.active_event == "low_gravity" and starts.back() == "low_gravity" and is_equal_approx(a.gravity_scale, ev.low_gravity_scale) and is_equal_approx(b.gravity_scale, ev.low_gravity_scale), "LOW GRAVITY: both balls get gravity x%.2f" % ev.low_gravity_scale)
@@ -1265,7 +1193,6 @@ func _brawl_event_checks() -> void:
 	var apex_after := await _ev_apex(br, a)
 	_expect(absf(apex_after - apex_normal) < 4.0, "after LOW GRAVITY the jump height is back to normal (%.0f vs %.0f px)" % [apex_after, apex_normal])
 
-	# --- SUPER BOUNCE: nảy cao gần bằng độ cao thả ---
 	ev.start_event("super_bounce")
 	await _frames(2)
 	_expect(ev.active_event == "super_bounce" and is_equal_approx(a.physics_material_override.bounce, ev.super_bounce_bounce) and is_equal_approx(b.physics_material_override.bounce, ev.super_bounce_bounce) and a.physics_material_override != b.physics_material_override and a.physics_material_override != mat_a, "SUPER BOUNCE: each ball gets its own material with bounce %.2f (the shared scene material is untouched: %.2f)" % [ev.super_bounce_bounce, mat_a.bounce])
@@ -1278,7 +1205,6 @@ func _brawl_event_checks() -> void:
 	var rebound_after := await _ev_rebound(br, a)
 	_expect(absf(rebound_after - rebound_normal) < 5.0, "after SUPER BOUNCE the rebound is back to normal (%.0f vs %.0f px)" % [rebound_after, rebound_normal])
 
-	# --- ICE FLOOR: gần như không ma sát, trượt xa; có lớp phủ băng nhìn thấy; hết thì bỏ ---
 	ev.start_event("ice_floor")
 	await _frames(2)
 	_expect(ev.active_event == "ice_floor" and is_equal_approx(a.physics_material_override.friction, ev.ice_friction) and is_equal_approx(b.physics_material_override.friction, ev.ice_friction) and _count(br.level, BrawlEvents.IceOverlay) == 1, "ICE FLOOR: friction %.2f on both balls and the icy overlay is on the arena" % ev.ice_friction)
@@ -1291,7 +1217,6 @@ func _brawl_event_checks() -> void:
 	var slide_after := await _ev_slide(br, a)
 	_expect(absf(slide_after - slide_normal) < 5.0, "after ICE FLOOR the slide is back to normal (%.0f vs %.0f px)" % [slide_after, slide_normal])
 
-	# --- REVERSED KEYS: giữ trái thì đi phải; tự hết sau thời gian đặt ---
 	ev.reversed_keys_seconds = 0.6
 	ev.start_event("reversed_keys")
 	await _frames(2)
@@ -1301,7 +1226,7 @@ func _brawl_event_checks() -> void:
 	await _frames(12)
 	_expect(a.charge_dir == 1 and b.charge_dir == -1, "REVERSED KEYS: holding left charges RIGHT for P1 and holding right charges LEFT for P2 (%d, %d)" % [a.charge_dir, b.charge_dir])
 	_release_all_keys()
-	await _frames(40)                                # 0.6 giây hết giờ
+	await _frames(40)
 	_expect(ev.active_event == "" and ends.back() == "reversed_keys" and not a.reverse_controls and not b.reverse_controls, "REVERSED KEYS: ends by itself after its duration and the keys are normal again")
 	Input.action_press("p1_left")
 	Input.action_press("p2_right")
@@ -1311,7 +1236,6 @@ func _brawl_event_checks() -> void:
 	await _frames(3)
 	ev.reversed_keys_seconds = 8.0
 
-	# --- SWAP!: đổi chỗ và vận tốc, tức thì ---
 	a.teleport(Vector2(300, 300))
 	b.teleport(Vector2(900, 250))
 	await _frames(3)
@@ -1331,14 +1255,13 @@ func _brawl_event_checks() -> void:
 	_expect(_ev_props(a) == base and _ev_props(b) == base, "SWAP!: nothing else is left changed")
 	br.hud.hide_event()
 
-	# --- Hồi sinh giữa sự kiện: hiệu ứng được áp lại, hết sự kiện thì sạch hoàn toàn ---
 	for id in ["low_gravity", "super_bounce", "ice_floor", "reversed_keys"]:
 		ev.start_event(id)
 		await _frames(2)
 		var during := _ev_props(b)
 		_expect(ev.active_event == id and during != base and _ev_props(a) == during, "%s: both players have the effect (%s)" % [id, str(during)])
-		br.kill(a, "pit")                           # P1 chết giữa sự kiện, P2 ghi điểm
-		await _frames(50)                           # hồi sinh sau 0.3 giây
+		br.kill(a, "pit")
+		await _frames(50)
 		_expect(not a.dead and ev.active_event == id and _ev_props(a) == during, "%s: the player who respawned during the event has the effect again" % id)
 		ev.stop_event()
 		await _frames(2)
@@ -1346,7 +1269,6 @@ func _brawl_event_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- HOT POTATO: bom nổi trên đầu, chuyền khi chạm (có thời gian chờ), nổ giết người cầm ---
 	br = await _make_brawl(0)
 	a = br.balls[0]
 	b = br.balls[1]
@@ -1366,7 +1288,7 @@ func _brawl_event_checks() -> void:
 	second.teleport(first.global_position + Vector2(toward, 0))
 	await _frames(6)
 	_expect(ev.bomb_carrier == second and _bomb_markers(second) == 1 and _bomb_markers(first) == 0, "HOT POTATO: touching the other player passes the bomb on")
-	first.teleport(second.global_position + Vector2(-toward, 0))   # lập tức chạm lại: còn trong thời gian chờ
+	first.teleport(second.global_position + Vector2(-toward, 0))
 	await _frames(6)
 	_expect(ev.bomb_carrier == second and _bomb_markers(second) == 1, "HOT POTATO: the pass cooldown stops the bomb pinging back at once")
 	await _frames(40)
@@ -1378,7 +1300,7 @@ func _brawl_event_checks() -> void:
 	var victim := ev.bomb_carrier
 	var scorer := br.opponent_of(victim)
 	var scorer_index := br.balls.find(scorer)
-	ev.time_left = 0.1                              # ngòi sắp hết
+	ev.time_left = 0.1
 	await _frames(12)
 	_expect(br.scores[scorer_index] == 1 and br.scores[1 - scorer_index] == 0 and kills.size() == 1 and kills[0][0] == scorer and kills[0][1] == victim and kills[0][2] == "bomb", "HOT POTATO: when the fuse ends the carrier is killed with cause 'bomb' and the other player scores (%s)" % str(br.scores))
 	_expect(victim.dead and ev.active_event == "" and ev.bomb_carrier == null and _bomb_markers(victim) == 0 and _bomb_markers(scorer) == 0 and ends.size() > 0, "HOT POTATO: the bomb is gone and the event is over after the explosion")
@@ -1388,7 +1310,6 @@ func _brawl_event_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Người cầm bom chết vì lý do khác: sự kiện bom kết thúc, không thêm điểm ---
 	for cause in ["pit", "stomp", "spikes"]:
 		br = await _make_brawl(0)
 		a = br.balls[0]
@@ -1402,12 +1323,11 @@ func _brawl_event_checks() -> void:
 		br.kill(carrier, cause)
 		await _frames(2)
 		_expect(ev.active_event == "" and ev.bomb_carrier == null and _bomb_markers(carrier) == 0 and _bomb_markers(rival) == 0 and br.hud.event_state == "", "HOT POTATO: the carrier dying by '%s' ends the bomb event" % cause)
-		await _frames(170)                          # quá thời gian ngòi cũ (2 giây)
+		await _frames(170)
 		_expect(br.scores[br.balls.find(rival)] == 1 and br.scores[br.balls.find(carrier)] == 0 and not carrier.dead, "HOT POTATO: no extra bomb point after the carrier died by '%s' (%s)" % [cause, str(br.scores)])
 		br.queue_free()
 		await _frames(2)
 
-	# --- Hết trận giữa sự kiện: mọi hiệu ứng được hoàn tác, sau đó không còn sự kiện ---
 	br = await _make_brawl(0)
 	a = br.balls[0]
 	b = br.balls[1]
@@ -1418,7 +1338,7 @@ func _brawl_event_checks() -> void:
 	await _frames(2)
 	_expect(_count(br.level, BrawlEvents.IceOverlay) == 1 and a.physics_material_override != mat_a, "(match end) the ice event is running")
 	br.scores[1] = Brawl.WIN_SCORE - 1
-	br.kill(a, "pit")                               # P2 đạt điểm thắng: hết trận
+	br.kill(a, "pit")
 	await _frames(3)
 	_expect(not br.match_running and ev.active_event == "" and _ev_props(a) == base and _ev_props(b) == base and a.physics_material_override == mat_a and _count(br.level, BrawlEvents.IceOverlay) == 0 and br.hud.event_state == "", "the match ending removes the running event completely")
 	ev.start_event("low_gravity")
@@ -1427,7 +1347,6 @@ func _brawl_event_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Bộ đếm giờ tự bốc thăm: không có gì lúc giới thiệu; roulette; sự kiện; không trùng; tắt được ---
 	br = await _make_brawl(0, 0.8, true)
 	a = br.balls[0]
 	b = br.balls[1]
@@ -1444,25 +1363,25 @@ func _brawl_event_checks() -> void:
 	ends = []
 	ev.event_started.connect(func(id: String) -> void: starts.append(id))
 	ev.event_ended.connect(func(id: String) -> void: ends.append(id))
-	await _frames(35)                                # vẫn đang READY...
+	await _frames(35)
 	_expect(not br.match_running and ev.active_event == "" and ev.rolling_event == "" and starts.is_empty() and br.hud.event_state == "", "no event and no roulette during the READY... intro")
 	while not br.match_running:
 		await _frames(1)
-	await _frames(24)                                # 0.4 giây sau khi bắt đầu: chưa tới giờ (first_delay 0.5)
+	await _frames(24)
 	_expect(starts.is_empty() and ev.rolling_event == "", "no event before first_delay has passed")
-	await _frames(18)                                # 0.7 giây: roulette đang quay
+	await _frames(18)
 	var rolled := ev.rolling_event
 	_expect(rolled != "" and br.hud.event_state == "roulette" and ev.active_event == "" and starts.is_empty(), "the roulette starts at first_delay and the event waits for it to finish (rolling %s)" % rolled)
-	await _frames(18)                                # 1.0 giây: roulette đã dừng ở tên được chọn nhưng chưa vào sự kiện
+	await _frames(18)
 	_expect(ev.rolling_event == rolled and br.hud.event_text == ev.event_name(rolled), "the roulette lands on the chosen event name ('%s')" % br.hud.event_text)
-	await _frames(18)                                # 1.3 giây: sự kiện đầu tiên đã bắt đầu
+	await _frames(18)
 	_expect(starts.size() == 1 and starts[0] == rolled and ev.rolling_event == "", "the automatic timer fired exactly the event the roulette landed on (%s)" % str(starts))
-	await _frames(60)                                # 2.3 giây: sự kiện đầu đã hết, đã tới giờ sự kiện thứ hai (0.5 + 1.5 = 2.0 giây)
+	await _frames(60)
 	_expect(ends.size() >= 1 and ev.active_event == "" and (ev.rolling_event != "" or starts.size() == 2), "the second roulette starts one interval (1.5 s) after the first")
-	await _frames(40)                                # 3.0 giây
+	await _frames(40)
 	_expect(starts.size() == 2 and starts[0] != starts[1], "never the same event twice in a row from the timer (%s)" % str(starts))
 	ev.enabled = false
-	await _frames(80)                                # 4.3 giây: lẽ ra sự kiện thứ ba bắt đầu vào 3.5 giây
+	await _frames(80)
 	_expect(starts.size() == 2 and ev.rolling_event == "", "enabled = false stops new events")
 	ev.stop_event()
 	await _frames(3)
@@ -1471,7 +1390,6 @@ func _brawl_event_checks() -> void:
 	await _frames(2)
 
 
-## Các câu châm chọc có thể hiện cho nguyên nhân `cause` khi người ghi điểm là P`s` và nạn nhân là P`v` (đã thay tên).
 func _taunt_options(cause: String, s: int, v: int) -> Array:
 	var out := []
 	for line in BrawlData.TAUNTS.get(cause, BrawlData.TAUNTS["default"]):
@@ -1479,7 +1397,6 @@ func _taunt_options(cause: String, s: int, v: int) -> Array:
 	return out
 
 
-## Lý do một chỗ đặt hộp `pos` không hợp lệ (đọc thẳng bản đồ chữ, không dùng hàm của BrawlItems); "" = hợp lệ.
 func _spot_problem(br: Brawl, pos: Vector2) -> String:
 	var rows := br.level.rows
 	var floor_y := pos.y + BrawlItems.BOX_LIFT
@@ -1497,25 +1414,21 @@ func _spot_problem(br: Brawl, pos: Vector2) -> String:
 	return ""
 
 
-## Xoá mọi hộp đang có (không qua nhặt).
 func _items_clear_boxes(it: BrawlItems) -> void:
 	for bx in it.boxes.duplicate():
 		it.boxes.erase(bx)
 		bx.queue_free()
 
 
-## Đặt bóng ở `pos` và chờ nó đứng yên.
 func _item_place(ball: Ball, pos: Vector2, frames := 30) -> void:
 	ball.teleport(pos)
 	await _frames(frames)
 
 
-## Vật phẩm troll, vương miện người dẫn điểm, câu châm chọc.
 func _brawl_item_checks() -> void:
-	var ground := 640.0                              # mặt đất của cả hai đấu trường (hàng 20)
-	var gy := ground - 15.0                          # độ cao tâm bóng đứng trên đất
+	var ground := 640.0
+	var gy := ground - 15.0
 
-	# --- Cơ bản + không có gì lúc giới thiệu ---
 	var br := await _make_brawl(0, 0.6, false, true)
 	var it := br.items
 	var a := br.balls[0]
@@ -1531,9 +1444,8 @@ func _brawl_item_checks() -> void:
 	_expect(it.boxes.size() == 1, "the first box appears right after the match starts (%d)" % it.boxes.size())
 	var first_box = it.boxes[0]
 	_expect(it.is_valid_spot(first_box.position) and _spot_problem(br, first_box.position) == "" and BrawlItems.ITEM_IDS.has(first_box.item_id), "the automatic box is on a valid spot and holds a real item (%s)" % first_box.item_id)
-	# giới hạn 2 hộp: sinh nhanh, không bao giờ vượt 2
 	it.spawn_interval = 0.1
-	it._next_in = 0.0                                # hộp đầu đã mọc: bỏ phần giờ đang đếm dở của khoảng 6 giây cũ
+	it._next_in = 0.0
 	var most := 0
 	for i in 70:
 		await _frames(1)
@@ -1542,7 +1454,6 @@ func _brawl_item_checks() -> void:
 	var ids_seen := {}
 	for bx in it.boxes:
 		ids_seen[bx.item_id] = true
-	# nhặt một hộp thì hộp mới mọc lại
 	var picks := []
 	it.item_picked.connect(func(ball: Ball, id: String) -> void: picks.append([ball, id]))
 	var target_box = it.boxes[0]
@@ -1557,7 +1468,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Hộp: chỗ đặt hợp lệ ở cả hai đấu trường, nhiều lần ---
 	for arena in BrawlData.ARENAS.size():
 		br = await _item_br(arena)
 		it = br.items
@@ -1586,7 +1496,6 @@ func _brawl_item_checks() -> void:
 			_items_clear_boxes(it)
 		_expect(bad.is_empty() and count_ok == 80, "arena %d: 80 random box spots are all on ground / platforms, never in terrain, over a pit, on spikes / trampolines, on a spawn or on a player (%s)" % [arena, str(bad.slice(0, 3))])
 		_expect(spots.size() >= 12 and high > 0, "arena %d: spots vary (%d different, %d on platforms)" % [arena, spots.size(), high])
-		# chỗ xấu bị từ chối
 		var rows := br.level.rows
 		var bad_ok := true
 		var bad_where := ""
@@ -1605,10 +1514,9 @@ func _brawl_item_checks() -> void:
 		br.queue_free()
 		await _frames(2)
 
-	# --- Hộp không nằm trên gai chống câu giờ ---
 	br = await _item_br(0)
 	it = br.items
-	var near_spike := Vector2(112.0, 640.0 - BrawlItems.BOX_LIFT)   # cột 3 hàng 19 là chỗ xuất phát: dùng cột 5
+	var near_spike := Vector2(112.0, 640.0 - BrawlItems.BOX_LIFT)
 	near_spike = Vector2(5.5 * 32.0, 640.0 - BrawlItems.BOX_LIFT)
 	_expect(it.is_valid_spot(near_spike), "a floor spot is fine before the stall spikes grow")
 	br._add_stall_spike(5)
@@ -1622,7 +1530,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Nhặt: chỉ khi tay trống; người kia nhặt được ---
 	br = await _item_br(0)
 	it = br.items
 	a = br.balls[0]
@@ -1644,7 +1551,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- GUN: 3 phát, đạn đẩy đối thủ chứ không đẩy người bắn, không gây sát thương ---
 	br = await _item_br(0)
 	it = br.items
 	a = br.balls[0]
@@ -1662,7 +1568,7 @@ func _brawl_item_checks() -> void:
 	var a_peak := 0.0
 	it.use(a)
 	_expect(a.ammo == 2 and it.held[0] == "gun" and used.size() == 1, "GUN: one press fires one shot (2 left)")
-	it.use(a)                                        # bấm lại ngay: súng đang chờ giữa hai phát
+	it.use(a)
 	_expect(a.ammo == 2, "GUN: pressing again during the cooldown does not waste a shot")
 	for i in 60:
 		await _frames(1)
@@ -1673,7 +1579,7 @@ func _brawl_item_checks() -> void:
 	_expect(peak_vx > 450.0 and shoved > 120.0, "GUN: the bullet shoves the opponent hard (peak vx %.0f, moved %.0f px)" % [peak_vx, shoved])
 	_expect(absf(a.global_position.x - a_x0) < 6.0 and a_peak < 60.0, "GUN: the shooter is not pushed")
 	_expect(br.scores == [0, 0] and not b.dead and not a.dead, "GUN: a hit never hurts anyone (score %s)" % str(br.scores))
-	a.facing = -1                                   # hai phát sau bắn vào tường bên trái, khỏi đẩy b vào gai
+	a.facing = -1
 	await _item_place(b, Vector2(100, gy))
 	it.use(a)
 	await _frames(14)
@@ -1682,7 +1588,6 @@ func _brawl_item_checks() -> void:
 	await _frames(14)
 	it.use(a)
 	_expect(used.size() == 3 and a.ammo == 0, "GUN: no fourth shot")
-	# đạn đẩy xuống vực khi đứng sát mép
 	await _item_place(b, Vector2(720, gy))
 	await _item_place(a, Vector2(752, gy))
 	a.facing = -1
@@ -1696,7 +1601,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- BANANA: đối thủ bị đảo phím có thời hạn, có hình báo hiệu, dọn sạch ---
 	br = await _item_br(0)
 	it = br.items
 	a = br.balls[0]
@@ -1711,13 +1615,12 @@ func _brawl_item_checks() -> void:
 	await _frames(12)
 	_expect(b.charge_dir == 1, "BANANA: the victim holding LEFT charges RIGHT (%d)" % b.charge_dir)
 	_release_all_keys()
-	await _frames(45)                                # 0.6 giây hết giờ
+	await _frames(45)
 	_expect(not b.reverse_controls and _count_children(b, BrawlItems.BananaMark) == 0, "BANANA: ends by itself, the keys are normal and the mark is gone")
 	Input.action_press("p2_left")
 	await _frames(12)
 	_expect(b.charge_dir == -1, "BANANA: after it ends LEFT charges left again")
 	_release_all_keys()
-	# đối thủ đang chết: không ném được, chuối còn trong tay
 	await _frames(5)
 	it.give(a, "banana")
 	b.dead = true
@@ -1727,14 +1630,12 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- CHUỐI + sự kiện REVERSED KEYS: hai thứ tự, cái nào hết trước cũng đúng ---
 	br = await _item_br(0, 0.3, false, true)
 	it = br.items
 	a = br.balls[0]
 	b = br.balls[1]
 	var ev := br.events
 	ev.reversed_keys_seconds = 30.0
-	# thứ tự 1: sự kiện trước, chuối sau; sự kiện hết trước
 	ev.start_event("reversed_keys")
 	it.banana_seconds = 1.0
 	it.give(a, "banana")
@@ -1746,7 +1647,6 @@ func _brawl_item_checks() -> void:
 	_expect(b.reverse_controls and not a.reverse_controls, "...the event ends first: only the banana victim stays reversed")
 	await _frames(70)
 	_expect(not a.reverse_controls and not b.reverse_controls and _count_children(b, BrawlItems.BananaMark) == 0, "...then the banana ends: nobody is reversed")
-	# thứ tự 2: chuối trước, sự kiện sau; chuối hết trước
 	it.banana_seconds = 1.0
 	it.give(a, "banana")
 	it.use(a)
@@ -1759,7 +1659,6 @@ func _brawl_item_checks() -> void:
 	ev.stop_event()
 	await _frames(2)
 	_expect(not a.reverse_controls and not b.reverse_controls, "...the event ends: nobody is stuck reversed")
-	# thứ tự 3: chuối trước, sự kiện bắt đầu và hết trong lúc chuối còn
 	it.banana_seconds = 1.5
 	it.give(a, "banana")
 	it.use(a)
@@ -1770,13 +1669,12 @@ func _brawl_item_checks() -> void:
 	_expect(b.reverse_controls and not a.reverse_controls, "BANANA, event starts and ends meanwhile: the victim is still reversed by the banana, the other is normal")
 	await _frames(110)
 	_expect(not b.reverse_controls and not a.reverse_controls, "...and the banana ending leaves everyone normal")
-	# nạn nhân chết giữa chuối + sự kiện
 	it.banana_seconds = 5.0
 	it.give(a, "banana")
 	it.use(a)
 	ev.start_event("reversed_keys")
 	await _frames(2)
-	br.kill(b, "pit")                                # b chết: hết chuối, nhưng sự kiện vẫn đang chạy
+	br.kill(b, "pit")
 	await _frames(2)
 	_expect(_count_children(b, BrawlItems.BananaMark) == 0 and b.reverse_controls, "the victim dying ends the banana, the event still reverses it")
 	await _frames(50)
@@ -1787,7 +1685,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- SWAP: đổi chỗ và vận tốc ---
 	br = await _item_br(0)
 	it = br.items
 	a = br.balls[0]
@@ -1815,7 +1712,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- SPRING TRAP ---
 	br = await _item_br(0)
 	it = br.items
 	a = br.balls[0]
@@ -1826,14 +1722,14 @@ func _brawl_item_checks() -> void:
 	_expect(it.held[0] == "" and it.traps.size() == 1, "SPRING: using it drops one trap and empties the hand")
 	var trap = it.traps[0]
 	_expect(absf(trap.position.x - a.global_position.x) < 4.0 and absf(trap.position.y - ground) < 2.0 and not trap.armed, "SPRING: the trap lies at the user's feet on the ground and is not armed yet (%s)" % trap.position)
-	await _frames(15)                                # 0,25 giây, chưa lên cò: bóng đứng trên bẫy vẫn đứng yên
+	await _frames(15)
 	_expect(a.global_position.y > gy - 3.0 and it.traps.size() == 1 and not trap.armed, "SPRING: an unarmed trap does nothing")
-	a.teleport(Vector2(220, gy))                     # chủ bước ra xa trước khi lên cò
+	a.teleport(Vector2(220, gy))
 	await _frames(25)
 	_expect(trap.armed and it.traps.size() == 1, "SPRING: the trap arms after about half a second")
 	var sprung := []
 	it.trap_sprung.connect(func(ball: Ball) -> void: sprung.append(ball))
-	await _item_place(b, Vector2(trap.position.x, gy), 1)   # đối thủ giẫm lên
+	await _item_place(b, Vector2(trap.position.x, gy), 1)
 	var apex := gy
 	for i in 80:
 		await _frames(1)
@@ -1842,21 +1738,19 @@ func _brawl_item_checks() -> void:
 	_expect(sprung.size() == 1 and sprung[0] == b and gy - apex > 400.0, "SPRING: the armed trap launches whoever touches it high into the air (%.0f px)" % (gy - apex))
 	_expect(it.traps.is_empty() and (not is_instance_valid(trap) or trap.get_parent() == null), "SPRING: the trap disappears after it fired")
 	print("    (a normal full jump rises about %.0f px)" % (pow(a.max_speed, 2) / (2.0 * 1400.0)))
-	# chủ cũng bị bắn
 	await _item_place(b, Vector2(1000, gy))
 	await _item_place(a, Vector2(100, gy))
 	it.give(a, "spring")
 	it.use(a)
-	await _frames(26)                                # a vẫn đứng ngay trên bẫy; lên cò sau 30 khung
+	await _frames(26)
 	apex = gy
 	for i in 60:
 		await _frames(1)
 		apex = minf(apex, a.global_position.y)
 	_expect(sprung.size() == 2 and sprung[1] == a and gy - apex > 400.0, "SPRING: the owner is launched too when still standing on it (%.0f px)" % (gy - apex))
-	# tự biến mất
 	await _item_place(b, Vector2(1000, gy))
 	await _item_place(a, Vector2(300, gy))
-	await _frames(100)                               # chờ chủ rơi xuống lại
+	await _frames(100)
 	it.spring_life_seconds = 1.0
 	await _item_place(a, Vector2(150, gy))
 	it.give(a, "spring")
@@ -1865,16 +1759,14 @@ func _brawl_item_checks() -> void:
 	_expect(it.traps.size() == 1, "SPRING: a trap is waiting (life 1 s for the test)")
 	await _frames(80)
 	_expect(it.traps.is_empty() and sprung.size() == 2, "SPRING: an untouched trap disappears on its own after its lifetime")
-	# không có đất dưới chân: không thả được
 	it.give(a, "spring")
-	a.teleport(Vector2(640, 500))                    # giữa vực, dưới bệ giữa
+	a.teleport(Vector2(640, 500))
 	await _frames(2)
 	it.use(a)
 	_expect(it.held[0] == "spring" and it.traps.is_empty(), "SPRING: cannot be dropped over a pit (item kept)")
 	br.queue_free()
 	await _frames(2)
 
-	# --- Mất vật phẩm khi chết, hiệu ứng dọn khi chết và hồi sinh ---
 	br = await _item_br(0, 0.3, false, true)
 	it = br.items
 	a = br.balls[0]
@@ -1883,9 +1775,9 @@ func _brawl_item_checks() -> void:
 	it.give(b, "spring")
 	it.banana_seconds = 5.0
 	var thrower_item := "banana"
-	it.give(a, thrower_item)                         # a cầm chuối thay súng
+	it.give(a, thrower_item)
 	_expect(a.ammo == 0 and a.bullet_knockback == 0.0, "replacing a gun with another item drops the gun's ammo")
-	it.use(a)                                        # b bị chuối
+	it.use(a)
 	it.give(a, "gun")
 	await _frames(2)
 	_expect(b.reverse_controls and it.held[1] == "spring" and it.held[0] == "gun", "(setup) P2 is bananaed and holds a spring, P1 holds a gun")
@@ -1902,14 +1794,13 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Hết trận: dọn hộp, bẫy, vật phẩm, hiệu ứng; không sinh gì thêm ---
 	br = await _item_br(0, 0.3, false, true)
 	it = br.items
 	a = br.balls[0]
 	b = br.balls[1]
 	it.banana_seconds = 20.0
 	it.give(b, "banana")
-	it.use(b)                                        # a bị chuối
+	it.use(b)
 	it.give(b, "gun")
 	await _item_place(a, Vector2(150, gy), 1)
 	it.give(a, "spring")
@@ -1930,7 +1821,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Vương miện người dẫn điểm ---
 	br = await _item_br(0)
 	a = br.balls[0]
 	b = br.balls[1]
@@ -1941,19 +1831,18 @@ func _brawl_item_checks() -> void:
 	_expect(is_equal_approx((a.get_node("Shape") as CollisionShape2D).shape.radius, 18.75), "crown: the collision circle grew too")
 	var crown: Node2D = a.find_children("*", "Node2D", false, false).filter(func(n: Node) -> bool: return n is Brawl.CrownMarker)[0]
 	_expect(crown.position.y < -50.0 and crown.visible, "crown: it floats over the leader's head (y %.0f)" % crown.position.y)
-	await _frames(50)                                # b hồi sinh
-	br.kill(a, "pit")                                # 1-1: hoà
+	await _frames(50)
+	br.kill(a, "pit")
 	await _frames(3)
 	_expect(br.leader == null and a.size_factor == 1.0 and b.size_factor == 1.0 and _count_children(a, Brawl.CrownMarker) == 0 and _count_children(b, Brawl.CrownMarker) == 0, "crown: a tie means nobody has the crown or the size")
 	await _frames(50)
-	br.kill(a, "pit")                                # 1-2: b dẫn
+	br.kill(a, "pit")
 	await _frames(3)
 	_expect(br.leader == b and is_equal_approx(b.size_factor, 1.25) and a.size_factor == 1.0 and _count_children(b, Brawl.CrownMarker) == 1 and _count_children(a, Brawl.CrownMarker) == 0, "crown: when the lead changes the crown moves to the new leader")
 	await _frames(50)
-	# lãnh đạo chết mà vẫn dẫn: hồi sinh to và đội vương miện, đứng vững trên đất
 	br.scores[1] = 3
 	await _frames(2)
-	br.kill(b, "pit")                                # P1 ghi: điểm [2,3], b vẫn dẫn
+	br.kill(b, "pit")
 	await _frames(2)
 	_expect(br.leader == b and b.dead, "crown: the leader dying while still ahead keeps the crown (scores %s)" % str(br.scores))
 	await _frames(80)
@@ -1965,7 +1854,6 @@ func _brawl_item_checks() -> void:
 		bot = maxf(bot, b.global_position.y)
 	_expect(not b.dead and br.leader == b and is_equal_approx(b.size_factor, 1.25) and _count_children(b, Brawl.CrownMarker) == 1 and b.visible, "crown: the leader respawns still big and crowned")
 	_expect(absf(top - (ground - 18.75)) < 3.0 and absf(bot - (ground - 18.75)) < 3.0, "crown: the respawned big leader stands on the ground, no sinking or popping (y %.1f..%.1f, expected %.1f)" % [top, bot, ground - 18.75])
-	# cùng sự kiện SUPER BOUNCE, SWAP!, HOT POTATO
 	br.events.start_event("super_bounce")
 	await _frames(30)
 	_expect(br.leader == b and is_equal_approx(b.size_factor, 1.25) and b.physics_material_override.bounce > 0.9 and _count_children(b, Brawl.CrownMarker) == 1, "crown: SUPER BOUNCE leaves the size and crown alone")
@@ -1993,7 +1881,6 @@ func _brawl_item_checks() -> void:
 	else:
 		_expect(crown_y > -90.0, "crown: the leader not carrying the bomb keeps the crown on the head (y %.0f)" % crown_y)
 	br.events.stop_event()
-	# hết trận: bỏ vương miện và cỡ
 	br.scores[0] = Brawl.WIN_SCORE - 1
 	br.scores[1] = 0
 	await _frames(2)
@@ -2003,7 +1890,6 @@ func _brawl_item_checks() -> void:
 	br.queue_free()
 	await _frames(2)
 
-	# --- Câu châm chọc ---
 	var font := UiTheme.main_font()
 	var widest := 0.0
 	var widest_line := ""
@@ -2052,17 +1938,15 @@ func _brawl_item_checks() -> void:
 	await _frames(2)
 
 
-## Rút ngắn mọi giờ chờ của SUDDEN DEATH và coi như sàn không còn cột nào để mọc gai (xoá danh sách cột): hàng gai dâng bắt đầu chừng 0,3 giây sau, dâng `speed` pixel/giây.
 func _sd_fast(br: Brawl, speed: float) -> void:
 	br.stall_timeout = 0.2
 	br.sudden_death_delay = 0.1
 	br.sudden_death_speed = speed
-	br._reset_stall()                                # tính giờ lại từ bây giờ
-	br._stall_left.clear()                           # không còn cột sàn nào để mọc gai
+	br._reset_stall()
+	br._stall_left.clear()
 	br._stall_right.clear()
 
 
-## Số hình hàng gai dâng (Brawl.HazardRow) đang nằm trong màn.
 func _hazard_rows(br: Brawl) -> int:
 	var n := 0
 	for child in br.level.get_children():
@@ -2071,15 +1955,12 @@ func _hazard_rows(br: Brawl) -> int:
 	return n
 
 
-## SUDDEN DEATH (hàng gai dâng khi sàn đã kín gai mà vẫn chưa ai ghi điểm): giá trị mặc định, thời điểm bắt đầu, dâng lên, giết người đứng sàn,
-## bệ cao nhất sống tới khi gai chạm, có điểm thì dọn sạch và tính giờ lại, hồi sinh không rơi vào gai, không chạy trước / sau trận.
 func _brawl_sudden_death_checks() -> void:
-	for c in get_children():                         # dọn cảnh còn sót lại
+	for c in get_children():
 		c.queue_free()
 	await _frames(3)
 
-	# --- Giá trị mặc định: đủ chậm để phản ứng, đủ nhanh để tới bệ cao nhất trong ~25 giây ---
-	var probe: Brawl = load("res://scenes/brawl.tscn").instantiate()   # chưa thêm vào cảnh: chỉ để đọc giá trị mặc định
+	var probe: Brawl = load("res://scenes/brawl.tscn").instantiate()
 	var def_speed: float = probe.sudden_death_speed
 	_expect(probe.sudden_death_delay >= 2.0 and probe.sudden_death_delay <= 8.0 and def_speed >= 25.0 and def_speed <= 45.0 and not probe.sudden_death_active and probe.hazard_y() == INF, "sudden death defaults: delay %.1f s, speed %.0f px/s, inactive, hazard_y() is INF" % [probe.sudden_death_delay, def_speed])
 	probe.free()
@@ -2088,16 +1969,15 @@ func _brawl_sudden_death_checks() -> void:
 		for line in String(BrawlData.ARENAS[i]["map"]).split("\n"):
 			if line.strip_edges() != "":
 				rows.append(line)
-		var top_row := rows.size()                   # hàng của bệ cao nhất (hàng đầu tiên có đất ở giữa)
+		var top_row := rows.size()
 		for r in rows.size():
 			for c in range(1, rows[r].length() - 1):
 				if rows[r][c] == "#":
 					top_row = mini(top_row, r)
-		var to_top := (rows.size() - top_row) * Level.TILE / def_speed   # từ đáy tới mặt bệ cao nhất
-		var to_ceiling := (rows.size() * Level.TILE + 16.0) / def_speed  # từ đáy tới trần
+		var to_top := (rows.size() - top_row) * Level.TILE / def_speed
+		var to_ceiling := (rows.size() * Level.TILE + 16.0) / def_speed
 		_expect(to_top >= 8.0 and to_top <= 25.0 and to_ceiling <= 25.0, "arena %d: the rising spikes need %.1f s to reach the highest platform (reaction time >= 8 s) and %.1f s to reach the ceiling (<= 25 s)" % [i, to_top, to_ceiling])
 
-	# --- Bắt đầu sau khi sàn kín gai (và chờ đủ giờ), hàng gai dâng, người miễn sát thương không bị giết, có điểm thì dọn sạch và tính giờ lại ---
 	var br := await _make_brawl(0)
 	await _brawl_ready(br)
 	br.stall_timeout = 0.3
@@ -2107,9 +1987,9 @@ func _brawl_sudden_death_checks() -> void:
 	br._reset_stall()
 	var a := br.balls[0]
 	var b := br.balls[1]
-	a.invuln = 9999.0                                # đứng giữa gai sàn mà không chết, để thử riêng hàng gai dâng
+	a.invuln = 9999.0
 	b.invuln = 9999.0
-	var full_frames := 0                             # số khung từ lúc sàn kín tới lúc bắt đầu
+	var full_frames := 0
 	for i in 600:
 		await _frames(1)
 		if br.sudden_death_active:
@@ -2125,13 +2005,13 @@ func _brawl_sudden_death_checks() -> void:
 	_expect(absf((y1 - y2) - 60.0) < 3.0, "the hazard rises at sudden_death_speed (%.1f px in 0.5 s, expected 60)" % (y1 - y2))
 	await _frames(20)
 	_expect(br.hazard_y() < a.global_position.y and br.scores == [0, 0] and not a.dead and not b.dead, "players with spawn protection are ignored by the hazard (it is above them and nobody died)")
-	br.kill(b, "pit")                                # có điểm: dọn sạch
+	br.kill(b, "pit")
 	await _frames(2)
 	_expect(not br.sudden_death_active and br.hazard_y() == INF and br.stall_spikes.is_empty() and not br.stall_active and _hazard_rows(br) == 0 and br._stall_time < 0.2, "a point clears the hazard and the stall spikes and restarts the timer")
-	await _frames(12)                                # chưa tới 0,3 giây
+	await _frames(12)
 	_expect(not br.stall_active and not br.sudden_death_active and br.hazard_y() == INF, "nothing restarts before the stall timeout has passed again")
 	await _frames(30)
-	b.invuln = 9999.0                                # P2 đã hồi sinh: đứng giữa gai sàn không chết
+	b.invuln = 9999.0
 	var again := false
 	for i in 600:
 		await _frames(1)
@@ -2141,14 +2021,13 @@ func _brawl_sudden_death_checks() -> void:
 	_expect(again and _hazard_rows(br) == 1, "...and sudden death comes back after another full quiet period")
 	await _free_brawl(br)
 
-	# --- Người đứng sàn chết, đối thủ (đứng bệ cao) được điểm ---
 	br = await _make_brawl(0)
 	await _brawl_ready(br)
 	a = br.balls[0]
 	b = br.balls[1]
 	var causes: Array[String] = []
 	br.point_scored.connect(func(_s: Ball, _v: Ball, cause: String) -> void: causes.append(cause))
-	b.teleport(Vector2(640, 340))                    # P2 lên bệ cao nhất ở giữa, P1 đứng ở chỗ xuất phát trên sàn
+	b.teleport(Vector2(640, 340))
 	_sd_fast(br, 150.0)
 	await _frames(8)
 	_expect(a.global_position.y > 600.0 and not a.dead and br.scores == [0, 0] and not br.sudden_death_active, "P1 stands on the floor, P2 on the top platform, nothing has happened yet")
@@ -2160,12 +2039,11 @@ func _brawl_sudden_death_checks() -> void:
 	_expect(not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0, "the hazard is removed after the kill")
 	await _free_brawl(br)
 
-	# --- Người đứng bệ cao nhất sống tới khi gai tới chân, rồi chết ---
 	br = await _make_brawl(0)
 	await _brawl_ready(br)
 	a = br.balls[0]
 	b = br.balls[1]
-	a.teleport(Vector2(560, 340))                    # cả hai lên bệ cao nhất (mặt bệ y = 384); P2 miễn sát thương để chỉ xét P1
+	a.teleport(Vector2(560, 340))
 	b.teleport(Vector2(720, 340))
 	b.invuln = 9999.0
 	await _frames(60)
@@ -2174,7 +2052,7 @@ func _brawl_sudden_death_checks() -> void:
 	_sd_fast(br, 120.0)
 	var prev_y := INF
 	var prev_feet := 0.0
-	var seen_above := false                          # đã thấy hàng gai dâng qua đất mà P1 vẫn sống
+	var seen_above := false
 	var died := false
 	for i in 600:
 		prev_y = br.hazard_y()
@@ -2189,15 +2067,14 @@ func _brawl_sudden_death_checks() -> void:
 	_expect(prev_y - prev_feet < 120.0 / 60.0 + 3.0 and prev_y - prev_feet > -3.0 and prev_y < 400.0, "...and dies exactly when the spike line reaches its feet (line at y=%.1f, feet at y=%.1f)" % [prev_y, prev_feet])
 	await _free_brawl(br)
 
-	# --- Hồi sinh lúc đang SUDDEN DEATH không rơi vào gai ---
 	br = await _make_brawl(0)
 	await _brawl_ready(br)
 	a = br.balls[0]
 	b = br.balls[1]
-	br.respawn_delay = 2.0                           # chờ lâu: hàng gai kịp dâng cao hơn chỗ hồi sinh
-	br.kill(a, "pit")                                # P2 được điểm; P1 vỡ, sắp hồi sinh
-	_sd_fast(br, 300.0)                              # (kill vừa tính lại giờ; đặt lại sau nó)
-	b.invuln = 9999.0                                # P2 không bị hàng gai giết (không làm điểm mới xoá hàng gai)
+	br.respawn_delay = 2.0
+	br.kill(a, "pit")
+	_sd_fast(br, 300.0)
+	b.invuln = 9999.0
 	var respawned := false
 	for i in 400:
 		await _frames(1)
@@ -2206,12 +2083,11 @@ func _brawl_sudden_death_checks() -> void:
 			break
 	_expect(respawned and br.sudden_death_active, "P1 respawns while sudden death is active (hazard y=%.1f)" % br.hazard_y())
 	_expect(br.hazard_y() > a.global_position.y + a.radius + 30.0 and a.invuln > 0.0, "respawn rule: the hazard is lowered under the respawn point (hazard y=%.1f, feet y=%.1f)" % [br.hazard_y(), a.global_position.y + a.radius])
-	await _frames(60)                                # cả khoảng miễn sát thương: hàng gai giữ yên, P1 không chết
+	await _frames(60)
 	_expect(not a.dead and br.scores == [0, 1] and br.hazard_y() > a.global_position.y + a.radius, "...and the respawned player is not killed by the hazard afterwards (scores %s)" % str(br.scores))
 	await _free_brawl(br)
 
-	# --- Không chạy trước trận (đang READY...) ---
-	br = await _make_brawl(0, 1.0)                   # giới thiệu 1 giây
+	br = await _make_brawl(0, 1.0)
 	br.stall_timeout = 0.01
 	br.stall_step = 0.01
 	br.sudden_death_delay = 0.01
@@ -2219,7 +2095,6 @@ func _brawl_sudden_death_checks() -> void:
 	_expect(not br.match_running and not br.stall_active and not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0, "nothing happens before the match starts (intro)")
 	await _free_brawl(br)
 
-	# --- Không chạy sau khi hết trận; hết trận giữa lúc đang dâng thì dọn hàng gai ---
 	br = await _make_brawl(0)
 	await _brawl_ready(br)
 	a = br.balls[0]
@@ -2233,41 +2108,35 @@ func _brawl_sudden_death_checks() -> void:
 			break
 	_expect(br.sudden_death_active and _hazard_rows(br) == 1, "sudden death is running before the match ends")
 	br.scores[0] = Brawl.WIN_SCORE - 1
-	br.kill(b, "pit")                                # điểm thứ 5: hết trận
+	br.kill(b, "pit")
 	await _frames(2)
 	_expect(not br.match_running and not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0 and br.stall_spikes.is_empty(), "the hazard and stall spikes are removed when the match ends")
-	await _frames(120)                               # giờ vẫn rút ngắn: nếu còn chạy thì đã bắt đầu lại
+	await _frames(120)
 	_expect(not br.stall_active and not br.sudden_death_active and br.hazard_y() == INF and _hazard_rows(br) == 0, "nothing restarts after the match is over")
 	await _free_brawl(br)
 
 
-## Dựng một trận đấu với máy ở đấu trường `arena`, đã hết giới thiệu, không có sự kiện / hộp tự sinh. Đặt lại hạt giống ngẫu nhiên (`rng_seed`)
-## để mỗi mục kiểm tra chạy y hệt nhau mọi lần, không phụ thuộc mục trước. Cờ Game.brawl_vs_bot được trả về false ngay sau khi dựng.
 func _bot_br(arena: int, rng_seed: int) -> Brawl:
-	seed(rng_seed + bot_seed_offset)                 # bot dùng randf / randi / randfn toàn cục
+	seed(rng_seed + bot_seed_offset)
 	Game.brawl_vs_bot = true
-	var br := await _make_brawl(arena, 0.2)          # sự kiện và hộp tự sinh đã tắt
-	Game.brawl_vs_bot = false                        # các bài sau không bị dính cờ
+	var br := await _make_brawl(arena, 0.2)
+	Game.brawl_vs_bot = false
 	await _brawl_ready(br)
 	return br
 
 
-## Xoá cảnh đấu sau khi các hẹn giờ của nó chạy hết. Xoá ngay sau một cú giết thì cảnh dẹt / hồi sinh / bảng thắng (await hẹn giờ) bị bỏ dở,
-## hẹn giờ và hàm chờ rò rỉ tới lúc thoát chương trình ("ObjectDB instances leaked", "resources still in use").
 func _free_brawl(br: Brawl) -> void:
 	if br.bot != null:
-		br.bot.enabled = false                       # bot ngừng chơi: không có cú giết mới nào mở thêm hẹn giờ trong lúc chờ
-	await _frames(150)                               # 2,5 giây: dài hơn mọi hẹn giờ trong cảnh (dẹt 0,6 + hồi sinh 0,3, bảng thắng, hạt 1,2)
+		br.bot.enabled = false
+	await _frames(150)
 	br.queue_free()
 	await _frames(2)
 
 
-## Tóm tắt trạng thái bot để in kèm khi một mục kiểm tra thất bại.
 func _bot_state(bot: BrawlBot) -> String:
 	return "[bot at %s dead=%s phase=%s mode=%s hops=%d aborts=%d thoughts=%d last='%s' jump='%s']" % [bot.ball.global_position.round(), bot.ball.dead, bot.phase, bot.mode, bot.hops, bot.aborts, bot.thoughts, bot.last_choice, bot.last_jump]
 
 
-## Có phím nào của người chơi `prefix` ("p1_" / "p2_") đang bị giữ không.
 func _any_pressed(prefix: String) -> bool:
 	for action in ["left", "right", "jump", "use"]:
 		if Input.is_action_pressed(prefix + action):
@@ -2275,19 +2144,16 @@ func _any_pressed(prefix: String) -> bool:
 	return false
 
 
-## Máy (bot) chơi thay người chơi 2: chỉ có khi chơi với máy, chỉ bấm phím p2_*, nhả hết phím khi hết trận / bị xoá, đi về phía người chơi,
-## không nhảy vào vực, nhặt hộp, dùng vật phẩm, ghi được điểm vào mục tiêu đứng yên.
 func _brawl_bot_checks() -> void:
-	for c in get_children():                         # dọn cảnh còn sót lại
+	for c in get_children():
 		c.queue_free()
 	await _frames(3)
 	_release_all_keys()
 
-	# --- Chỉ tạo bot khi chơi với máy; điều khiển người chơi 2; HUD và câu châm chọc ghi BOT ---
 	Game.brawl_vs_bot = false
 	var br := await _make_brawl(0, 0.2)
 	_expect(br.bot == null and not br.vs_bot and br.player_name(br.balls[1]) == "P2", "2-player Brawl has no bot (brawl.bot is null, names stay P1 / P2)")
-	await _free_brawl(br)                            # chờ hết phần giới thiệu (hẹn giờ) rồi mới xoá, không thì hẹn giờ bị bỏ dở và rò rỉ
+	await _free_brawl(br)
 	br = await _bot_br(0, 101)
 	var bot: BrawlBot = br.bot
 	var a := br.balls[0]
@@ -2300,7 +2166,6 @@ func _brawl_bot_checks() -> void:
 	br.kill(a, "pit")
 	_expect(not "P2" in br.hud.message_label.text, "taunts about P1 never say P2 either ('%s')" % br.hud.message_label.text)
 	await _frames(60)
-	# --- Chỉ bấm phím p2_*, không bao giờ động tới phím p1_* ---
 	var p1_pressed := 0
 	var p2_pressed := 0
 	var heard_launch := [0]
@@ -2313,19 +2178,17 @@ func _brawl_bot_checks() -> void:
 			p2_pressed += 1
 	_expect(p1_pressed == 0 and p2_pressed > 0, "the bot presses only player 2's actions, never player 1's (p1 frames %d, p2 frames %d)" % [p1_pressed, p2_pressed])
 	_expect(heard_launch[0] >= 1 and bot.hops >= 1, "the bot's real key presses make its ball jump (%d launches)" % heard_launch[0])
-	# --- Nhả hết phím khi hết trận ---
 	var waited := 0
-	while bot.held_actions().is_empty() and waited < 600:   # đợi tới lúc bot đang giữ phím
+	while bot.held_actions().is_empty() and waited < 600:
 		await _frames(1)
 		waited += 1
 	_expect(not bot.held_actions().is_empty(), "the bot is holding a key before the match ends %s" % _bot_state(bot))
 	br.scores[1] = Brawl.WIN_SCORE - 1
-	br.kill(a, "pit")                                 # điểm thắng: hết trận
+	br.kill(a, "pit")
 	await _frames(2)
 	_expect(not br.match_running and bot.held_actions().is_empty() and not _any_pressed("p2_") and bot.phase == "idle", "all the bot's keys are released when the match ends")
 	await _free_brawl(br)
 
-	# --- Nhả hết phím khi bot bị xoá giữa chừng ---
 	br = await _bot_br(1, 102)
 	bot = br.bot
 	waited = 0
@@ -2333,11 +2196,10 @@ func _brawl_bot_checks() -> void:
 		await _frames(1)
 		waited += 1
 	_expect(_any_pressed("p2_"), "the bot holds a real p2 action (Input sees it)")
-	bot.free()                                        # xoá ngay giữa lúc đang giữ phím
+	bot.free()
 	_expect(not _any_pressed("p2_"), "all keys are released when the bot node is freed")
 	await _free_brawl(br)
 
-	# --- Chết thì nhả hết phím ---
 	br = await _bot_br(1, 103)
 	bot = br.bot
 	waited = 0
@@ -2349,31 +2211,29 @@ func _brawl_bot_checks() -> void:
 	_expect(bot.held_actions().is_empty() and not _any_pressed("p2_"), "the bot lets go of every key when its ball dies")
 	await _free_brawl(br)
 
-	# --- Đi / nhảy về phía người chơi ---
 	br = await _bot_br(0, 104)
 	bot = br.bot
 	a = br.balls[0]
 	b = br.balls[1]
-	a.teleport(Vector2(60, 625))                      # người chơi 1 đứng yên ở góc trái
-	b.teleport(Vector2(330, 625))                     # bot cùng bên, trước dãy gai: đường tới người chơi 1 là mặt đất phẳng
+	a.teleport(Vector2(60, 625))
+	b.teleport(Vector2(330, 625))
 	await _frames(40)
 	var start_gap := absf(b.global_position.x - a.global_position.x)
-	var closest := start_gap                          # khoảng cách ngang gần nhất tới người chơi 1 trong 5 giây
+	var closest := start_gap
 	for i in 60 * 5:
 		await _frames(1)
 		closest = minf(closest, absf(b.global_position.x - a.global_position.x))
 	_expect(bot.hops >= 2 and closest < start_gap - 100.0, "the bot hops toward the player (gap %.0f px -> closest %.0f px in 5 s, %d hops, now at %s)" % [start_gap, closest, bot.hops, b.global_position.round()])
 	await _free_brawl(br)
 
-	# --- Gần mép vực, mục tiêu không với tới: bot không tự nhảy xuống vực ---
 	br = await _bot_br(0, 105)
 	bot = br.bot
 	a = br.balls[0]
 	b = br.balls[1]
-	a.teleport(Vector2(640, 150))                     # người chơi 1 lơ lửng cao trên vực, đứng yên (không ai với tới)
+	a.teleport(Vector2(640, 150))
 	await _frames(2)
 	a.freeze = true
-	b.teleport(Vector2(548, 625))                     # bot đứng sát mép vực giữa (vực từ x = 576 tới 704)
+	b.teleport(Vector2(548, 625))
 	var pit_deaths := [0]
 	var death_info := [""]
 	br.point_scored.connect(func(_s: Ball, v: Ball, cause: String) -> void:
@@ -2385,7 +2245,6 @@ func _brawl_bot_checks() -> void:
 	a.freeze = false
 	await _free_brawl(br)
 
-	# --- Nhặt hộp gần, rồi dùng vật phẩm ---
 	br = await _bot_br(0, 106)
 	bot = br.bot
 	a = br.balls[0]
@@ -2399,7 +2258,6 @@ func _brawl_bot_checks() -> void:
 	_expect(box != null and br.items.boxes.size() == 1, "a box was placed 150 px from the bot")
 	await _frames(60 * 6)
 	_expect(picked.any(func(p: Array) -> bool: return p[0] == b), "the bot walks to a nearby box and picks it up (%d picks)" % picked.size())
-	# vật phẩm: cho chuối, đưa cả hai về chỗ gần nhau trên mặt đất; người chơi 1 miễn sát thương để bot không dẫm chết nó giữa chừng
 	br.items.give(b, "banana")
 	a.teleport(Vector2(760, 625))
 	b.teleport(Vector2(1000, 625))
@@ -2410,13 +2268,12 @@ func _brawl_bot_checks() -> void:
 	_expect(used.any(func(p: Array) -> bool: return p[0] == b) and bot.items_used >= 1, "the bot uses an item it holds (%s; held '%s', bot %s dead=%s phase=%s mode=%s, P1 %s dead=%s)" % [str(used.map(func(p: Array) -> String: return p[1])), br.items.held[1], b.global_position.round(), b.dead, bot.phase, bot.mode, a.global_position.round(), a.dead])
 	await _free_brawl(br)
 
-	# --- Ghi điểm vào mục tiêu đứng yên trong thời gian hợp lý ---
 	br = await _bot_br(0, 107)
 	bot = br.bot
 	a = br.balls[0]
 	b = br.balls[1]
-	a.teleport(Vector2(100, 625))                     # người chơi 1 đứng yên ở bên trái
-	b.teleport(Vector2(340, 625))                     # bot cùng bên, trước dãy gai
+	a.teleport(Vector2(100, 625))
+	b.teleport(Vector2(340, 625))
 	var frames_to_point := 0
 	while br.scores[1] == 0 and frames_to_point < 60 * 30:
 		await _frames(1)
@@ -2426,14 +2283,12 @@ func _brawl_bot_checks() -> void:
 	_release_all_keys()
 
 
-## Chế độ đấu có sẵn: dựng, chờ hết giới thiệu (hộp vật phẩm tự sinh tắt trừ khi `with_items`).
 func _item_br(arena := 0, intro := 0.3, with_items := false, with_events := false) -> Brawl:
 	var br := await _make_brawl(arena, intro, with_events, with_items)
 	await _brawl_ready(br)
 	return br
 
 
-## Số node con của `node` thuộc lớp `type` (không tính cái đang chờ xoá).
 func _count_children(node: Node, type: Variant) -> int:
 	var n := 0
 	for c in node.get_children():
@@ -2442,7 +2297,6 @@ func _count_children(node: Node, type: Variant) -> int:
 	return n
 
 
-## Hệ số phóng của node Sprite (x), để so với pixel_scale * kích thước.
 func _sprite_scale(ball: Ball) -> float:
 	return (ball.get_node("Sprite") as Node2D).scale.x
 
@@ -2456,29 +2310,22 @@ func _shot(shot_name: String) -> void:
 		img.save_png(shots_dir.path_join(shot_name + ".png"))
 
 
-# ====================================================================================================================
-# Chế độ Chained: dây đàn hồi, neo, súng cao su, hạt (sao xâu trên dây), chết chung, về đích, màn 1 qua được.
-# ====================================================================================================================
-
-## Vị trí tâm bóng đứng trên mặt ô (cột, hàng) của bản đồ (cùng công thức Chained._find_spawn; cột 63.5 = giữa ô cột 63).
 func _cpos(col: float, row: float) -> Vector2:
 	return Vector2(col * 32.0, (row + 1.0) * 32.0 - 16.0)
 
 
-## Bản đồ phẳng `cols` cột x 15 hàng: phần trên trống, 3 hàng cuối là đất (mặt đất ở y = 384, tâm bóng đứng ở y = 369).
 func _chained_flat_map(cols := 80, pillar_from := -1, pillar_to := -1) -> String:
 	var rows: PackedStringArray = []
-	for r in 12:                                       # 12 hàng trên: trống, có tường hai bên
+	for r in 12:
 		var row := "#" + ".".repeat(cols - 2) + "#"
-		if pillar_from > 0 and r >= 9:                 # cột đất cao 3 ô (hàng 9..11) từ cột pillar_from tới pillar_to
+		if pillar_from > 0 and r >= 9:
 			row = row.substr(0, pillar_from) + "#".repeat(pillar_to - pillar_from + 1) + row.substr(pillar_to + 1)
 		rows.append(row)
-	for r in 3:                                        # 3 hàng đất
+	for r in 3:
 		rows.append("#".repeat(cols))
 	return "\n".join(rows)
 
 
-## Bản đồ có hố không đáy: 24 hàng, mặt đất ở hàng 12 (y = 384), hố ở các cột pit_from..pit_to (bờ trái, bờ phải là đất tới tận đáy).
 func _chained_pit_map(cols: int, pit_from: int, pit_to: int) -> String:
 	var rows: PackedStringArray = []
 	for r in 12:
@@ -2488,7 +2335,6 @@ func _chained_pit_map(cols: int, pit_from: int, pit_to: int) -> String:
 	return "\n".join(rows)
 
 
-## Hai bóng (người chơi 1 ở x1, người chơi 2 ở x2, cùng tầm y) nối bằng một Rope trong bản đồ `map`; chờ cho đứng yên. Trả về [màn, bóng 1, bóng 2, dây].
 func _rope_rig(map: String, x1: float, x2: float, y: float, with_rope := true) -> Array:
 	var lv := _make_level(map)
 	var a := _make_ball(lv, Vector2(x1, y))
@@ -2506,7 +2352,6 @@ func _rope_rig(map: String, x1: float, x2: float, y: float, with_rope := true) -
 	return [lv, a, b, rope]
 
 
-## Giữ hướng `dir` ("right" / "left") của người chơi `prefix` ("p1_" / "p2_") `charge` khung rồi bấm nhảy một khung: nhảy đầy lực nếu charge >= 42.
 func _chained_jump(prefix: String, dir: String, charge := 50) -> void:
 	Input.action_press(prefix + dir)
 	await _frames(charge)
@@ -2516,7 +2361,6 @@ func _chained_jump(prefix: String, dir: String, charge := 50) -> void:
 	Input.action_release(prefix + dir)
 
 
-## Đợi `ball` rời đất rồi chạm đất lần đầu: trả về x lúc chạm đất, hoặc -1 nếu quá `max_frames` khung (rơi vực...).
 func _await_landing(ball: Ball, max_frames := 300) -> float:
 	var airborne := false
 	for f in max_frames:
@@ -2528,7 +2372,6 @@ func _await_landing(ball: Ball, max_frames := 300) -> float:
 	return -1.0
 
 
-## Đặt các hạt của `rope` đúng ở các vị trí `values` (không tách hạt chồng nhau, để bài test kiểm tra số liệu chính xác).
 func _set_beads(rope: Rope, values: Array) -> void:
 	rope.beads.clear()
 	for v in values:
@@ -2537,14 +2380,12 @@ func _set_beads(rope: Rope, values: Array) -> void:
 		rope.beads.append(bd)
 
 
-## Dịch cả hai người chơi cùng lúc tới `pos_a` / `pos_b` (dịch một người đi xa thì dây giật cả hai rất mạnh) rồi chờ vài khung.
 func _chained_move(ch: Chained, pos_a: Vector2, pos_b: Vector2, frames := 3) -> void:
 	ch.balls[0].teleport(pos_a)
 	ch.balls[1].teleport(pos_b)
 	await _frames(frames)
 
 
-## Dựng cảnh Chained ở màn `index` (rút ngắn mọi thời gian chờ, không đổi cảnh thật khi hết mạng). `ready` = chờ hết giới thiệu và cho hai bóng ổn định.
 func _make_chained(index := 0, ready := true) -> Chained:
 	Game.chained_index = index
 	var ch: Chained = load("res://scenes/chained.tscn").instantiate()
@@ -2564,7 +2405,6 @@ func _make_chained(index := 0, ready := true) -> Chained:
 	return ch
 
 
-## Xoá cảnh Chained sau khi các hẹn giờ của nó chạy hết (xoá ngay thì hẹn giờ bị bỏ dở và rò rỉ tới lúc thoát chương trình).
 func _free_chained(ch: Chained) -> void:
 	_release_all_keys()
 	await _frames(150)
@@ -2572,9 +2412,8 @@ func _free_chained(ch: Chained) -> void:
 	await _frames(2)
 
 
-## Mọi kiểm tra của chế độ Chained.
 func _chained_checks() -> void:
-	for c in get_children():                           # dọn mọi cảnh còn sót (cùng một thế giới vật lý)
+	for c in get_children():
 		c.queue_free()
 	await _frames(3)
 	_release_all_keys()
@@ -2589,7 +2428,6 @@ func _chained_checks() -> void:
 	await _chained_levels_23_checks()
 
 
-## Dây: không lực dưới độ dài chùng, kéo khi căng, không vượt quá độ dài tối đa, đứt thì tắt, chỉnh được lúc đang chạy.
 func _chained_rope_checks() -> void:
 	var map := _chained_flat_map(80)
 	var rig := await _rope_rig(map, 600.0, 700.0, 369.0)
@@ -2603,7 +2441,7 @@ func _chained_rope_checks() -> void:
 	await _frames(60)
 	_expect(rope.tension() == 0.0 and absf(a.global_position.x - ax) < 1.0 and absf(b.global_position.x - bx) < 1.0, "rope: no force while the balls are closer than rest_length (%.0f px apart)" % rope.current_length())
 
-	a.teleport(Vector2(500.0, 369.0))                  # kéo giãn: cách 290 pixel
+	a.teleport(Vector2(500.0, 369.0))
 	b.teleport(Vector2(790.0, 369.0))
 	await _frames(3)
 	var d0 := rope.current_length()
@@ -2611,17 +2449,17 @@ func _chained_rope_checks() -> void:
 	_expect(rope.tension() > 0.0 and rope.current_length() < d0 - 20.0 and a.global_position.x > 505.0 and b.global_position.x < 785.0, "rope: pulls both balls together when stretched (%.0f -> %.0f px, tension %.0f)" % [d0, rope.current_length(), rope.tension()])
 	_expect(a.linear_velocity.x > 0.0 and b.linear_velocity.x < 0.0, "rope: the pull is applied as velocity through knockback (a %.0f, b %.0f px/s)" % [a.linear_velocity.x, b.linear_velocity.x])
 
-	rope.cut = true                                    # đứt: không lực
+	rope.cut = true
 	a.teleport(Vector2(500.0, 369.0))
 	b.teleport(Vector2(790.0, 369.0))
 	await _frames(3)
 	await _frames(30)
 	_expect(rope.tension() == 0.0 and absf(rope.current_length() - 290.0) < 3.0, "rope: cut applies no force (%.0f px apart, tension %.0f)" % [rope.current_length(), rope.tension()])
-	rope.cut = false                                   # nối lại
+	rope.cut = false
 	await _frames(5)
 	_expect(rope.tension() > 0.0, "rope: not cut any more pulls again (tension %.0f)" % rope.tension())
 
-	rope.rest_length = 400.0                           # chỉnh lúc đang chạy: dây dài hơn thì hết căng
+	rope.rest_length = 400.0
 	rope.max_length = 600.0
 	a.teleport(Vector2(500.0, 369.0))
 	b.teleport(Vector2(790.0, 369.0))
@@ -2630,7 +2468,6 @@ func _chained_rope_checks() -> void:
 	lv.queue_free()
 	await _frames(3)
 
-	# --- Đẩy mạnh một bóng ra xa: dây giữ không cho vượt quá max_length nhiều ---
 	rig = await _rope_rig(map, 600.0, 660.0, 369.0)
 	lv = rig[0]
 	a = rig[1]
@@ -2639,7 +2476,7 @@ func _chained_rope_checks() -> void:
 	var longest := 0.0
 	for f in 300:
 		if f < 30:
-			b.knockback(Vector2(150.0, 0.0))           # đẩy b ra xa liên tục nửa giây
+			b.knockback(Vector2(150.0, 0.0))
 		await _frames(1)
 		longest = maxf(longest, rope.current_length())
 	_expect(longest < rope.max_length + 64.0, "rope: a ball pushed away hard never gets more than 2 tiles past max_length (longest %.0f px, max %.0f)" % [longest, rope.max_length])
@@ -2648,9 +2485,8 @@ func _chained_rope_checks() -> void:
 	await _frames(3)
 
 
-## Neo: giữ phím use lúc đứng đất. Không trượt, nặng hơn, ma sát cao, giữ được bạn lơ lửng trên hố; thả ra là trả lại đúng như cũ.
 func _chained_anchor_checks() -> void:
-	var map := _chained_pit_map(70, 25, 44)            # hố từ cột 25 tới 44, sâu 12 ô
+	var map := _chained_pit_map(70, 25, 44)
 	var rig := await _rope_rig(map, 23.5 * 32.0, 21.0 * 32.0, 369.0)
 	var lv: Level = rig[0]
 	var a: Ball = rig[1]
@@ -2667,10 +2503,10 @@ func _chained_anchor_checks() -> void:
 	_expect(mat0.friction == friction0 and is_equal_approx(mat0.bounce, 0.55), "anchor: the shared scene material is not modified (duplicated for the anchor)")
 	var x0 := a.global_position.x
 
-	b.teleport(Vector2(29.5 * 32.0, 250.0))            # người chơi 2 thả vào hố
+	b.teleport(Vector2(29.5 * 32.0, 250.0))
 	var lowest := 0.0
 	var hung := 0
-	for f in 300:                                      # 5 giây
+	for f in 300:
 		await _frames(1)
 		lowest = maxf(lowest, b.global_position.y)
 		if f > 120 and b.global_position.y > 420.0 and rope.current_length() < rope.max_length + 48.0:
@@ -2685,7 +2521,6 @@ func _chained_anchor_checks() -> void:
 	lv.queue_free()
 	await _frames(3)
 
-	# --- Điểm cố định: dây căng ngang kéo người không neo đi, còn người đang neo thì đứng yên (bạn kia cũng neo để dây giữ căng) ---
 	var drag := {}
 	for anchored in [false, true]:
 		rig = await _rope_rig(_chained_flat_map(80), 1000.0, 1100.0, 369.0)
@@ -2693,11 +2528,11 @@ func _chained_anchor_checks() -> void:
 		a = rig[1]
 		b = rig[2]
 		rope = rig[3]
-		Input.action_press("p2_use")                   # người chơi 2 neo: dây căng 290 pixel mà bạn kia bị kéo, còn người neo thì không
+		Input.action_press("p2_use")
 		if anchored:
 			Input.action_press("p1_use")
 		await _frames(5)
-		b.teleport(Vector2(1290.0, 369.0))             # kéo giãn dây ra 290 pixel
+		b.teleport(Vector2(1290.0, 369.0))
 		await _frames(8)
 		x0 = a.global_position.x
 		await _frames(60)
@@ -2707,7 +2542,6 @@ func _chained_anchor_checks() -> void:
 		await _frames(3)
 	_expect(drag[true] < 3.0 and drag[false] > 30.0, "anchor: a stretched rope drags a normal ball along (%.0f px) but not an anchored one (%.1f px)" % [drag[false], drag[true]])
 
-	# --- Không trượt: bị hất ngang thì anchored dừng nhanh hơn không anchored ---
 	var slide := {}
 	for anchored in [false, true]:
 		rig = await _rope_rig(_chained_flat_map(80), 1000.0, 900.0, 369.0)
@@ -2725,7 +2559,6 @@ func _chained_anchor_checks() -> void:
 		await _frames(3)
 	_expect(slide[true] < 45.0 and slide[false] > slide[true] + 25.0, "anchor: a shoved anchored ball does not slide (%.0f px) while a normal one does (%.0f px)" % [slide[true], slide[false]])
 
-	# --- Neo cần đang đứng đất; nhảy thì thả neo; đáp xuống lại neo, không bị dây kéo đi ---
 	rig = await _rope_rig(_chained_flat_map(80), 1000.0, 1100.0, 369.0)
 	lv = rig[0]
 	a = rig[1]
@@ -2754,10 +2587,8 @@ func _chained_anchor_checks() -> void:
 	await _frames(3)
 
 
-## Súng cao su: một người neo, người kia lùi ra cho dây căng rồi nhảy về phía người neo thì bị hất qua đầu, xa hơn hẳn một cú nhảy thường lúc đang bị trói.
 func _chained_slingshot_checks() -> void:
 	var map := _chained_flat_map(140)
-	# nhảy đầy lực không bị trói (để so): bóng kia ở rất xa
 	var rig := await _rope_rig(map, 1000.0, 300.0, 369.0, false)
 	var lv: Level = rig[0]
 	var a: Ball = rig[1]
@@ -2767,7 +2598,6 @@ func _chained_slingshot_checks() -> void:
 	var free_px := land_free - x_free
 	lv.queue_free()
 	await _frames(3)
-	# nhảy đầy lực lúc đang bị trói, bạn đứng sau lưng (không neo): bị dây giật lại và kéo bạn theo
 	rig = await _rope_rig(map, 1000.0, 936.0, 369.0)
 	lv = rig[0]
 	a = rig[1]
@@ -2779,7 +2609,6 @@ func _chained_slingshot_checks() -> void:
 	_release_all_keys()
 	lv.queue_free()
 	await _frames(3)
-	# súng cao su: người chơi 1 neo ở x = 1500, người chơi 2 đứng sau cách 290 pixel, cũng giữ neo, rồi nhảy
 	rig = await _rope_rig(map, 1500.0, 1210.0, 369.0)
 	lv = rig[0]
 	a = rig[1]
@@ -2809,9 +2638,8 @@ func _chained_slingshot_checks() -> void:
 	await _frames(3)
 
 
-## Hạt xâu trên dây: nhặt sao thêm hạt ở giữa, hạt trượt về người đứng thấp, giữ khoảng cách, dừng ở hai đầu, cướp sao, hạt rơi, bead_counts.
 func _chained_bead_checks() -> void:
-	var map := _chained_flat_map(80, 10, 14)           # có một cột đất cao 3 ô ở cột 10..14
+	var map := _chained_flat_map(80, 10, 14)
 	var rig := await _rope_rig(map, 9.0 * 32.0, 9.0 * 32.0 - 56.0, 369.0)
 	var lv: Level = rig[0]
 	var a: Ball = rig[1]
@@ -2826,17 +2654,14 @@ func _chained_bead_checks() -> void:
 	_expect(rope.beads.size() == 1 and is_equal_approx(bead.t, 0.5) and added[0] == 1, "beads: a new bead starts in the middle of the rope (t = %.3f) and bead_added fires" % bead.t)
 	await _frames(40)
 	_expect(is_equal_approx(rope.beads[0].t, 0.5) and rope.bead_counts() == Vector2i.ZERO, "beads: players at the same height leave it where it is (t = %.3f), and a bead exactly in the middle counts for nobody" % rope.beads[0].t)
-	# người chơi 1 đứng lên cột cao: hạt trượt về phía người chơi 2 (thấp hơn)
-	a.teleport(_cpos(12.5, 8))                         # trên đỉnh cột đất (hàng 9 là mặt đất của cột)
+	a.teleport(_cpos(12.5, 8))
 	await _frames(90)
 	_expect(a.global_position.y < b.global_position.y - 60.0, "beads: test setup, player 1 stands 3 tiles higher (%.0f vs %.0f)" % [a.global_position.y, b.global_position.y])
 	_expect(rope.beads[0].t > 0.9 and rope.bead_counts() == Vector2i(0, 1), "beads: slide toward the LOWER player, here player 2 (t = %.3f, counts %s)" % [rope.beads[0].t, str(rope.bead_counts())])
-	# đổi chỗ: người chơi 2 lên cột, người chơi 1 xuống: hạt chạy về phía người chơi 1
 	b.teleport(_cpos(12.5, 8))
 	a.teleport(_cpos(8.5, 11))
 	await _frames(150)
 	_expect(rope.beads[0].t < 0.1 and rope.bead_counts() == Vector2i(1, 0), "beads: ... and back toward player 1 when the players swap heights (t = %.3f, counts %s)" % [rope.beads[0].t, str(rope.bead_counts())])
-	# nhiều hạt: giữ khoảng cách, nằm trong dây, đúng thứ tự
 	rope.remove_bead(rope.beads[0])
 	for i in 4:
 		rope.add_bead()
@@ -2853,7 +2678,6 @@ func _chained_bead_checks() -> void:
 	_expect(min_gap > 0.03 and min_gap * rope.current_length() > 10.0, "beads: neighbours keep a small gap and do not overlap (min gap %.3f of the rope = %.0f px)" % [min_gap, min_gap * rope.current_length()])
 	_expect(rope.bead_counts() == Vector2i(4, 0), "beads: bead_counts counts each side (%s)" % str(rope.bead_counts()))
 
-	# --- bead_counts và hạt đúng giữa dây, rồi cướp sao, rồi hạt rơi (đóng băng để hạt không trượt) ---
 	rope.freeze_beads = true
 	await _frames(2)
 	_set_beads(rope, [0.5])
@@ -2892,7 +2716,6 @@ func _chained_bead_checks() -> void:
 	await _frames(3)
 
 
-## Cảnh Chained: màn dựng được, hai người chơi khác phím, camera, giới thiệu, nhặt sao thành hạt, cướp sao khi dẫm đầu.
 func _chained_mode_checks() -> void:
 	_expect(Game.has_method("start_chained") and Game.chained_totals.size() == 2 and Game.chained_index == 0 and load(Game.CHAINED_SCENE) != null, "Game: start_chained, chained_index, chained_totals and the scene exist")
 	for i in ChainedData.LEVELS.size():
@@ -2937,7 +2760,6 @@ func _chained_mode_checks() -> void:
 	_expect(a.on_ground and b.on_ground, "chained: both balls stand on the ground at the start")
 	_expect(ch.hud.message_label.text == "GO!" or ch.hud.message_label.text == "READY...", "chained: the HUD says READY... / GO!")
 
-	# --- camera: giữa hai người, zoom ra xa khi dây căng ---
 	_expect(is_equal_approx(ch.zoom_for_separation(0.0), 1.0) and is_equal_approx(ch.zoom_for_separation(ch.rope.rest_length), 1.0) and is_equal_approx(ch.zoom_for_separation(ch.rope.max_length), Chained.MIN_ZOOM) and ch.zoom_for_separation((ch.rope.rest_length + ch.rope.max_length) / 2.0) < 0.95, "chained camera: zoom is 1.0 up to rest_length and falls to %.2f at max_length" % Chained.MIN_ZOOM)
 	var mid := (a.global_position + b.global_position) / 2.0
 	_expect(ch.camera.global_position.distance_to(mid + Vector2(0.0, -40.0)) < 6.0 and ch.camera.zoom.x > 0.97, "chained camera: starts centred between the two players at zoom %.2f" % ch.camera.zoom.x)
@@ -2952,7 +2774,6 @@ func _chained_mode_checks() -> void:
 	await _frames(240)
 	_expect(ch.camera.zoom.x > 0.97, "chained camera: zooms back in when the players come together (%.2f)" % ch.camera.zoom.x)
 
-	# --- nhặt sao: thêm hạt ở giữa dây; nhặt tim: +1 mạng (tối đa 5) ---
 	var got := [0]
 	ch.rope.bead_added.connect(func() -> void: got[0] += 1)
 	ch.level.collect_star(a)
@@ -2964,10 +2785,10 @@ func _chained_mode_checks() -> void:
 	ch.level.collect_heart()
 	_expect(ch.lives == Chained.LIVES, "chained: hearts give +1 life up to the maximum (%d)" % ch.lives)
 	var star_node: Pickup = null
-	for n in ch.level.get_children():                  # ngôi sao gần người chơi 1 nhất
+	for n in ch.level.get_children():
 		if n is Pickup and n.kind == "star" and (star_node == null or n.global_position.distance_to(a.global_position) < star_node.global_position.distance_to(a.global_position)):
 			star_node = n
-	await _chained_move(ch, a.global_position, star_node.global_position + Vector2(0.0, -16.0), 4)   # chạm một ngôi sao thật bằng người chơi 2
+	await _chained_move(ch, a.global_position, star_node.global_position + Vector2(0.0, -16.0), 4)
 	_expect(ch.rope.beads.size() == 2 and not is_instance_valid(star_node), "chained: either player touching a real star adds a bead and removes the star (%d beads)" % ch.rope.beads.size())
 	var cp_pos := _cpos(35.5, 15)
 	var cp_node: Pickup = null
@@ -2977,11 +2798,10 @@ func _chained_mode_checks() -> void:
 	await _chained_move(ch, cp_node.global_position + Vector2(-40.0, -16.0), cp_node.global_position + Vector2(0.0, -16.0), 4)
 	_expect(cp_node.used and ch.respawn_position.distance_to(cp_node.global_position + Vector2(0.0, -16.0)) < 1.0 and ch.respawn_points[0].x < ch.respawn_position.x and ch.respawn_points[1].x > ch.respawn_position.x, "chained: either player touching a checkpoint sets it for both (respawn %s)" % str(ch.respawn_position))
 
-	# --- dẫm đầu bạn: hạt gần đầu nạn nhân nhảy sang đầu kẻ dẫm ---
 	ch.rope.freeze_beads = true
 	_set_beads(ch.rope, [0.2, 0.45, 0.6, 0.8])
 	await _chained_move(ch, _cpos(30.5, 15), _cpos(32.5, 15), 40)
-	a.teleport(Vector2(b.global_position.x + 4.0, b.global_position.y - 160.0))   # người chơi 1 rơi xuống đầu người chơi 2
+	a.teleport(Vector2(b.global_position.x + 4.0, b.global_position.y - 160.0))
 	await _frames(40)
 	var tmax := 0.0
 	var tmin := 1.0
@@ -2993,7 +2813,6 @@ func _chained_mode_checks() -> void:
 	await _free_chained(ch)
 
 
-## Chết chung: cả hai hồi sinh ở cờ lưu, mất 1 mạng, miễn sát thương, một nửa sao phía người chết rơi ra đất và nhặt lại được, hết mạng thì chơi lại.
 func _chained_death_checks() -> void:
 	Game.chained_totals[0] = 0
 	Game.chained_totals[1] = 0
@@ -3010,14 +2829,13 @@ func _chained_death_checks() -> void:
 		if n is Pickup and n.kind == "checkpoint" and absf(n.global_position.x - _cpos(35.5, 15).x) < 4.0:
 			cp = n
 			break
-	await _chained_move(ch, cp.global_position + Vector2(0.0, -16.0), cp.global_position + Vector2(40.0, -16.0), 6)   # người chơi 1 cắm cờ ở cột 35
+	await _chained_move(ch, cp.global_position + Vector2(0.0, -16.0), cp.global_position + Vector2(40.0, -16.0), 6)
 	var respawn_pos := ch.respawn_position
 	_expect(cp.used and respawn_pos.distance_to(cp.global_position + Vector2(0.0, -16.0)) < 1.0, "death: player 1 touching the checkpoint activates it for both")
-	# người chơi 1 có 4 hạt, người chơi 2 có 2 hạt
 	rope.freeze_beads = true
 	_set_beads(rope, [0.1, 0.2, 0.3, 0.4, 0.7, 0.8])
 	_expect(rope.bead_counts() == Vector2i(4, 2), "death: test setup, 4 beads on player 1's half and 2 on player 2's")
-	await _chained_move(ch, _cpos(25.5, 15), _cpos(27.5, 15), 20)   # đi xa chỗ cờ để thấy hai người bị đưa về
+	await _chained_move(ch, _cpos(25.5, 15), _cpos(27.5, 15), 20)
 	ch.kill_both("hurt", a)
 	_expect(ch.lives == Chained.LIVES - 1 and died == ["hurt"] and a.dead and b.dead, "death: either player dying kills both and costs one shared life (lives %d)" % ch.lives)
 	await _frames(2)
@@ -3037,32 +2855,27 @@ func _chained_death_checks() -> void:
 	var before := rope.beads.size()
 	var star: Pickup = ch.dropped_stars[0]
 	rope.freeze_beads = false
-	a.teleport(star.global_position + Vector2(0.0, -16.0))     # nhặt lại
+	a.teleport(star.global_position + Vector2(0.0, -16.0))
 	await _frames(4)
 	_expect(not is_instance_valid(star) and rope.beads.size() == before + 1, "death: a dropped star can be collected again and becomes a new bead (%d -> %d beads)" % [before, rope.beads.size()])
-	# miễn sát thương: chạm gai lúc đó không mất mạng
 	var lives_now := ch.lives
 	b.take_hit()
 	await _frames(3)
 	_expect(ch.lives == lives_now and died.size() == 1, "death: while invulnerable, being hurt costs nothing")
 	await _frames(100)
-	# gai thật: chạm gai (take_hit sau khi hết miễn sát thương) giết cả hai
 	b.take_hit()
 	await _frames(3)
 	_expect(ch.lives == lives_now - 1 and died.size() == 2 and died[1] == "hurt", "death: spikes / enemies (Ball.hurt) kill both with cause 'hurt' (lives %d)" % ch.lives)
 	await _frames(40)
-	# rơi xuống vực
 	lives_now = ch.lives
 	b.teleport(Vector2(b.global_position.x, ch.level.size.y + 400.0))
 	await _frames(100)
 	_expect(ch.lives == lives_now - 1 and died.size() == 3 and died[2] == "pit" and not a.dead and not b.dead, "death: falling below the level kills both with cause 'pit' and they come back (lives %d)" % ch.lives)
-	# kill_both không có người gây ra (sự kiện): không rơi sao
 	await _frames(60)
 	var stars_before := ch.dropped_stars.size()
 	ch.kill_both("event")
 	await _frames(60)
 	_expect(died.size() == 4 and died[3] == "event" and ch.dropped_stars.size() == stars_before, "death: kill_both(cause) with no culprit drops no stars (cause '%s')" % died[3])
-	# hết mạng: chơi lại màn
 	await _frames(60)
 	var restarts := [0]
 	ch.restart_requested.connect(func() -> void: restarts[0] += 1)
@@ -3077,10 +2890,9 @@ func _chained_death_checks() -> void:
 	await _free_chained(ch)
 
 
-## Về đích: chỉ tính khi cả hai còn sống, chốt số sao, cộng tổng, bảng kết quả với người thắng và nút Next / Retry / Menu.
 func _chained_finish_checks() -> void:
 	for scenario in [[Vector2i(3, 1), "PLAYER 1 WINS THE LEVEL!"], [Vector2i(1, 2), "PLAYER 2 WINS THE LEVEL!"], [Vector2i(2, 2), "IT'S A TIE!"]]:
-		Game.chained_totals[0] = 2                      # tổng sao từ các màn trước
+		Game.chained_totals[0] = 2
 		Game.chained_totals[1] = 3
 		var want: Vector2i = scenario[0]
 		var ch := await _make_chained()
@@ -3094,14 +2906,14 @@ func _chained_finish_checks() -> void:
 			values.append(0.1 + 0.05 * i)
 		for i in want.y:
 			values.append(0.9 - 0.05 * i)
-		values.append(0.5)                              # hạt đúng giữa dây: không tính cho ai
+		values.append(0.5)
 		_set_beads(ch.rope, values)
 		var flag: Pickup = null
 		for n in ch.level.get_children():
 			if n is Pickup and n.kind == "finish":
 				flag = n
-		if scenario[1] == "PLAYER 1 WINS THE LEVEL!":   # lần đầu thử về đích lúc một người đang chết: không tính
-			b.dead = true                               # (người chết thì dây không kéo, nên dịch người chơi 1 một mình tới đích được)
+		if scenario[1] == "PLAYER 1 WINS THE LEVEL!":
+			b.dead = true
 			a.teleport(flag.global_position + Vector2(0.0, -16.0))
 			await _frames(6)
 			_expect(not ch.finished and ch.match_running and finished_counts.is_empty() and not flag.used, "finish: touching the flag while the partner is dead does not finish the level (and the flag stays usable)")
@@ -3110,7 +2922,7 @@ func _chained_finish_checks() -> void:
 			b.dead = false
 		else:
 			a.teleport(flag.global_position + Vector2(-70.0, -16.0))
-		b.teleport(flag.global_position + Vector2(0.0, -16.0))    # chạm cờ đích bằng người chơi 2 (một người là đủ)
+		b.teleport(flag.global_position + Vector2(0.0, -16.0))
 		await _frames(4)
 		_expect(ch.finished and not ch.match_running and finished_counts == [want] and ch.counts() == want, "finish: either player touching F with both alive finishes the level (counts %s)" % str(ch.counts()))
 		_expect(Game.chained_totals[0] == 2 + want.x and Game.chained_totals[1] == 3 + want.y, "finish: the stars are added to the running totals (%s)" % str(Game.chained_totals))
@@ -3125,7 +2937,6 @@ func _chained_finish_checks() -> void:
 		_expect(hud.retry_pressed.get_connections().size() >= 1 and hud.menu_pressed.get_connections().size() >= 1 and hud.next_pressed.get_connections().size() >= 1, "finish: the buttons are wired up")
 		_expect(ch._base_totals == [2, 3], "finish: Retry restores the totals from before the level (%s)" % str(ch._base_totals))
 		await _free_chained(ch)
-	# bảng kết quả có nút Next level khi còn màn sau
 	var hud2 := ChainedHud.new()
 	add_child(hud2)
 	hud2.setup("x", 5)
@@ -3137,18 +2948,15 @@ func _chained_finish_checks() -> void:
 	Game.chained_totals[1] = 0
 
 
-## Màn 1 qua được bằng hai người chơi: qua khe 7 ô bằng súng cao su (neo + dây hất), rồi người kia được kéo qua. Nhảy thường khi bị trói thì không qua được.
 func _chained_level_checks() -> void:
 	var ch := await _make_chained()
 	var a := ch.balls[0]
 	var b := ch.balls[1]
 	var lv := ch.level
-	# hình học dùng bên dưới: bờ trái là đất tới cột 63, khe từ cột 64 tới 70, bờ phải từ cột 71 (hàng 16 là mặt đất)
 	var gap_ok := lv.char_at(16, 63) == "#" and lv.char_at(16, 64) == "." and lv.char_at(16, 70) == "." and lv.char_at(16, 71) == "#" and lv.char_at(15, 63) == "." and lv.char_at(15, 71) == "."
 	_expect(gap_ok, "level 1: the wide gap is where the test expects it (columns 64..70, 7 tiles wide)")
 	var far_edge := 71.0 * 32.0
 	var edge := _cpos(63.5, 15)
-	# người chơi 1 neo ở mép khe, người chơi 2 lùi ra sau 290 pixel cho dây căng, cũng giữ neo, rồi nhảy về phía người chơi 1
 	Input.action_press("p1_use")
 	Input.action_press("p2_use")
 	await _chained_move(ch, edge, edge - Vector2(290.0, 0.0), 25)
@@ -3160,7 +2968,6 @@ func _chained_level_checks() -> void:
 	_expect(landed > far_edge + 15.0 and b.global_position.x > far_edge + 15.0 and ch.lives == Chained.LIVES, "level 1: the slingshot lands player 2 on the far side of the 7-tile gap (landed x %.0f, far edge %.0f), nobody died" % [landed, far_edge])
 	_expect(ch.rope.is_anchored(b) and absf(b.global_position.x - landed) < 40.0, "level 1: holding anchor on landing keeps player 2 on the far side instead of being dragged back (x %.0f)" % b.global_position.x)
 	_expect(ch.rope.beads.size() >= beads_before + 2, "level 1: the three stars on the flight path of the slingshot are collected on the way (%d new beads)" % (ch.rope.beads.size() - beads_before))
-	# người chơi 2 giữ neo bên kia khe; người chơi 1 nhả neo... không, vẫn giữ neo tới lúc nhảy; bị dây kéo qua
 	await _chained_jump("p1_", "right", 45)
 	var landed1 := await _await_landing(a)
 	await _frames(40)
@@ -3170,7 +2977,6 @@ func _chained_level_checks() -> void:
 	_expect(all_beads >= 3, "level 1: the pair crossed the gap with %d stars threaded on the rope" % all_beads)
 	await _free_chained(ch)
 
-	# thung lũng (hố 4 ô có bậc thang): một người nhảy đủ lực từ đáy là lên khỏi thung lũng được
 	var lv2 := _make_level(ChainedData.LEVELS[0]["map"])
 	var solo := _make_ball(lv2, _cpos(47.5, 19))
 	solo.set_player(1)
@@ -3182,7 +2988,6 @@ func _chained_level_checks() -> void:
 	lv2.queue_free()
 	await _frames(3)
 
-	# nhảy thường qua khe khi bị trói (không neo): dây giật người kia xuống khe, cả hai rơi
 	ch = await _make_chained()
 	a = ch.balls[0]
 	b = ch.balls[1]
@@ -3193,11 +2998,6 @@ func _chained_level_checks() -> void:
 	await _free_chained(ch)
 
 
-# ====================================================================================================================
-# Màn 2 và màn 3 của Chained: kiểm tra bản đồ, sao với tới được, từng đoạn khó qua được bằng phím thật, chuyển màn.
-# ====================================================================================================================
-
-## Các hàng của bản đồ chữ (cùng cách tách của Level.build).
 func _chained_rows(map: String) -> PackedStringArray:
 	var rows: PackedStringArray = []
 	for line in map.strip_edges(false, true).split("\n"):
@@ -3206,8 +3006,6 @@ func _chained_rows(map: String) -> PackedStringArray:
 	return rows
 
 
-## Các ô "đứng được" của bản đồ: ô không phải đất mà ngay dưới là đất, cộng đường đi của bệ di chuyển (=, đi ngang theo > hoặc dọc theo |) và ván bập bênh (S, dài 5 ô).
-## Trả về từ điển {Vector2i(hàng, cột): true}.
 func _chained_stand_cells(rows: PackedStringArray) -> Dictionary:
 	var stand := {}
 	var n := rows.size()
@@ -3220,10 +3018,10 @@ func _chained_stand_cells(rows: PackedStringArray) -> Dictionary:
 			var below := rows[r + 1][c] if r + 1 < n else "#"
 			if below == "#" or Level.SLOPES.has(below):
 				stand[Vector2i(r, c)] = true
-			if ch == "S":                                  # ván bập bênh dài 5 ô quanh trục
+			if ch == "S":
 				for dc in range(-2, 3):
 					stand[Vector2i(r, c + dc)] = true
-	for r in n:                                            # bệ di chuyển: mọi chỗ bệ có thể đứng
+	for r in n:
 		var c := 0
 		while c < w:
 			if rows[r][c] != "=":
@@ -3248,12 +3046,6 @@ func _chained_stand_cells(rows: PackedStringArray) -> Dictionary:
 	return stand
 
 
-## Các ngôi sao mà hai người KHÔNG thể với tới theo quy tắc đơn giản dựa trên bản đồ (danh sách rỗng = tốt). Một sao với tới được nếu:
-##   1. nhảy: có ô đứng được cách tối đa 4 cột và nằm thấp hơn sao 0..4 hàng (nhảy đủ lực cao 5 ô);
-##   2. lò xo: có lò xo (T) cách tối đa 3 cột và nằm thấp hơn sao 0..6 hàng (lò xo bật khi có người neo bên cạnh cao ~6,7 ô);
-##   3. bay: có hố không đáy rộng >= 6 cột trong vòng 12 cột quanh sao (cột không có đất từ hàng của sao trở xuống) và có ô đứng được cách tối đa 18 cột,
-##      thấp hơn sao 0..6 hàng (súng cao su / nhảy đôi bay xa 18 ô, vòng cung cao tới ~5 ô).
-## Ngoài ra sao không được bị bịt kín (ít nhất một ô kề không phải đất).
 func _chained_star_problems(rows: PackedStringArray) -> Array[String]:
 	var stand := _chained_stand_cells(rows)
 	var n := rows.size()
@@ -3268,7 +3060,7 @@ func _chained_star_problems(rows: PackedStringArray) -> Array[String]:
 		for c in w:
 			if rows[r][c] != "*":
 				continue
-			var sealed := true                             # có ô kề trống không
+			var sealed := true
 			for d in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1)]:
 				var rr: int = r + d.x
 				var cc: int = c + d.y
@@ -3278,17 +3070,17 @@ func _chained_star_problems(rows: PackedStringArray) -> Array[String]:
 				problems.append("star (row %d, col %d) is sealed inside the ground" % [r, c])
 				continue
 			var ok := false
-			for cell: Vector2i in stand:                   # quy tắc 1: nhảy
+			for cell: Vector2i in stand:
 				if absi(cell.y - c) <= 4 and cell.x - r >= 0 and cell.x - r <= 4:
 					ok = true
 					break
-			if not ok:                                     # quy tắc 2: lò xo
+			if not ok:
 				for t in tramps:
 					if absi(t.y - c) <= 3 and t.x - r >= 0 and t.x - r <= 6:
 						ok = true
 						break
-			if not ok:                                     # quy tắc 3: bay qua hố không đáy gần đó
-				var pit_run := 0                           # số cột liền nhau không đáy trong vòng 12 cột (không có đất từ hàng của sao trở xuống)
+			if not ok:
+				var pit_run := 0
 				var best_run := 0
 				for cc in range(maxi(c - 12, 0), mini(c + 13, w)):
 					var open_col := true
@@ -3307,7 +3099,6 @@ func _chained_star_problems(rows: PackedStringArray) -> Array[String]:
 	return problems
 
 
-## Đếm ký tự `ch` trong các hàng.
 func _chained_count_char(rows: PackedStringArray, ch: String) -> int:
 	var n := 0
 	for row in rows:
@@ -3315,7 +3106,6 @@ func _chained_count_char(rows: PackedStringArray, ch: String) -> int:
 	return n
 
 
-## Kiểm tra tĩnh màn Chained số `index` (không cần dựng cảnh): tên, kích thước, tường hai mép, ký tự bắt buộc, số sao / cờ lưu / tim / quái, sao với tới được, đất đủ dày.
 func _chained_static_checks(index: int, w_lo: int, w_hi: int, star_lo: int, star_hi: int, checkpoints: int, hearts_min: int, enemies_min: int) -> void:
 	var data: Dictionary = ChainedData.LEVELS[index]
 	var tag := "level %d (%s)" % [index + 1, data["name"]]
@@ -3335,13 +3125,13 @@ func _chained_static_checks(index: int, w_lo: int, w_hi: int, star_lo: int, star
 	_expect(_chained_count_char(rows, "K") == checkpoints, "%s: %d checkpoints (K), want %d" % [tag, _chained_count_char(rows, "K"), checkpoints])
 	_expect(_chained_count_char(rows, "+") >= hearts_min and _chained_count_char(rows, "e") >= enemies_min, "%s: %d hearts (want >= %d) and %d enemies (want >= %d)" % [tag, _chained_count_char(rows, "+"), hearts_min, _chained_count_char(rows, "e"), enemies_min])
 	var banned := 0
-	for forbidden in ["M", "G", "A", "B", "D", "a", "b", "d"]:   # không boss, không cổng, không cửa / nút
+	for forbidden in ["M", "G", "A", "B", "D", "a", "b", "d"]:
 		banned += _chained_count_char(rows, forbidden)
 	_expect(banned == 0, "%s: no boss, gate, door or button characters" % tag)
 	var problems := _chained_star_problems(rows)
 	_expect(problems.is_empty(), "%s: every star is within reach of some standable tile (%s)" % [tag, ", ".join(problems) if not problems.is_empty() else "rule: hop / trampoline / flight arc"])
 	var stand := _chained_stand_cells(rows)
-	var thin := 0                                          # ô đứng trên đất mà đất dưới mỏng (người không rơi xuyên qua sàn)
+	var thin := 0
 	for cell: Vector2i in stand:
 		if cell.x + 1 < rows.size() and rows[cell.x + 1][cell.y] == "#":
 			var depth := 0
@@ -3353,7 +3143,7 @@ func _chained_static_checks(index: int, w_lo: int, w_hi: int, star_lo: int, star
 			if depth < 3 and cell.x + 1 + depth < rows.size():
 				thin += 1
 	_expect(thin == 0, "%s: every piece of ground is at least 3 tiles thick (%d thin spots)" % [tag, thin])
-	var checks_ok := true                                  # cờ lưu, lò xo nằm trên đất
+	var checks_ok := true
 	for r in rows.size():
 		for c in w:
 			if rows[r][c] in ["K", "T"] and not (r + 1 < rows.size() and rows[r + 1][c] == "#"):
@@ -3361,7 +3151,6 @@ func _chained_static_checks(index: int, w_lo: int, w_hi: int, star_lo: int, star
 	_expect(checks_ok, "%s: every checkpoint and trampoline stands on solid ground" % tag)
 
 
-## Cả hai người nhảy cùng lúc theo hướng `dir`: người chơi 1 giữ phím `f1` khung rồi nhảy, người chơi 2 giữ `f2` khung rồi nhảy (nhảy đôi). Chờ thêm `wait` khung.
 func _chained_hop2(f1: int, f2: int, wait := 0, dir := "right") -> void:
 	Input.action_press("p1_" + dir)
 	Input.action_press("p2_" + dir)
@@ -3378,7 +3167,6 @@ func _chained_hop2(f1: int, f2: int, wait := 0, dir := "right") -> void:
 	await _frames(wait)
 
 
-## Như _chained_hop2 nhưng người chơi 2 bắt đầu giữ phím chậm hơn người chơi 1 `off` khung (`off` âm: người chơi 1 chậm hơn); mỗi người giữ phím `f1` / `f2` khung rồi nhảy.
 func _chained_hop2o(f1: int, f2: int, off := 0, wait := 0, dir := "right") -> void:
 	var s1 := maxi(-off, 0)
 	var s2 := maxi(off, 0)
@@ -3399,7 +3187,6 @@ func _chained_hop2o(f1: int, f2: int, off := 0, wait := 0, dir := "right") -> vo
 	await _frames(wait)
 
 
-## Chờ cho `ball` đứng yên trên đất (nảy xong), tối đa `max_frames` khung.
 func _chained_settle(ball: Ball, max_frames := 150) -> void:
 	var still := 0
 	for f in max_frames:
@@ -3409,7 +3196,6 @@ func _chained_settle(ball: Ball, max_frames := 150) -> void:
 			return
 
 
-## Người chơi `prefix` nhảy lặp lại (giữ `dir` `frames` khung rồi nhảy, chờ đứng yên) tới khi đứng trên ô cột >= `col_min`, hàng `row` (tối đa `tries` lần). Trả về có tới nơi không.
 func _chained_hop_to(ball: Ball, prefix: String, col_min: float, row: int, frames: int, tries := 6, dir := "right") -> bool:
 	for t in tries:
 		await _chained_settle(ball)
@@ -3420,13 +3206,10 @@ func _chained_hop_to(ball: Ball, prefix: String, col_min: float, row: int, frame
 	return ball.global_position.x >= col_min * 32.0 and absf(ball.global_position.y - ((row + 1) * 32.0 - 16.0)) < 8.0
 
 
-## Bóng đứng trên đất ở ô (cột `col` có thể lẻ, hàng `row`) trong sai số `tol` pixel.
 func _chained_at(ball: Ball, col: float, row: int, tol := 24.0) -> bool:
 	return ball.on_ground and absf(ball.global_position.x - col * 32.0) < tol and absf(ball.global_position.y - ((row + 1) * 32.0 - 16.0)) < 10.0
 
 
-## Súng cao su qua một khe: người chơi 1 neo ở ô mép (cột `edge_col`, hàng `row`), người chơi 2 lùi `back` pixel cũng neo rồi nhảy đầy lực về phía người neo (bị dây hất qua đầu),
-## rồi người chơi 1 nhảy theo (được dây kéo qua). Mép bờ bên kia ở cột `far_col`. Trả về số hạt (sao) nhặt thêm trên đường bay.
 func _chained_sling(ch: Chained, label: String, edge_col: int, row: int, far_col: int, p1_frames := 45, back := 290.0) -> int:
 	var a := ch.balls[0]
 	var b := ch.balls[1]
@@ -3449,9 +3232,6 @@ func _chained_sling(ch: Chained, label: String, edge_col: int, row: int, far_col
 	return ch.rope.beads.size() - beads0
 
 
-# ---- Thử nghiệm dung sai: mỗi hàm dựng một cảnh mới, làm đúng một đoạn khó với các tham số (số khung giữ phím, lệch giờ, chỗ đứng) rồi trả về có qua được không ----
-
-## Súng cao su: người chơi 1 neo ở ô mép (`edge_col`, `row`), người chơi 2 lùi `back` pixel, neo, nhảy `f2` khung; rồi người chơi 1 nhảy `f1` khung theo.
 func _try_sling(idx: int, edge_col: int, row: int, far_col: int, back: float, f2: int, f1: int) -> bool:
 	var ch := await _make_chained(idx)
 	var a := ch.balls[0]
@@ -3474,12 +3254,11 @@ func _try_sling(idx: int, edge_col: int, row: int, far_col: int, back: float, f2
 	return ok
 
 
-## Hàm thử chung: dựng màn `idx`, đặt hai người ở (`c1`, `c2`, hàng `row`), chạy `steps` (mảng [f1, f2, off, chờ]) bằng nhảy đôi, trả về [cảnh, ok_sống].
 func _try_pair(idx: int, c1: float, c2: float, row: int, steps: Array, extra_keys := [], clear := false) -> Array:
 	var ch := await _make_chained(idx)
 	for k in extra_keys:
 		Input.action_press(k)
-	if clear:                                                # dọn sạch quái (dẫm quái đã có bài test riêng) để đo riêng cú nhảy qua gai
+	if clear:
 		for n in ch.level.get_children():
 			if n is Enemy:
 				n.squash()
@@ -3491,11 +3270,10 @@ func _try_pair(idx: int, c1: float, c2: float, row: int, steps: Array, extra_key
 	return [ch, ch.lives == Chained.LIVES and not ch.balls[0].dead]
 
 
-## Số khung `f` (cả hai), lệch giờ `off`: màn 2, ba bậc thang (nhảy đôi lặp lại) tới cao nguyên.
 func _try_stairs(f: int, off: int) -> bool:
 	var ch := await _make_chained(1)
 	await _chained_move(ch, _cpos(14.5, 19), _cpos(13.4, 19), 40)
-	await _chained_jump("p1_", "right", f)                   # lần lượt từng người nhảy một cú `f` khung từ dưới sàn lên bậc thang (cao 1 ô)
+	await _chained_jump("p1_", "right", f)
 	await _chained_settle(ch.balls[0])
 	await _chained_jump("p2_", "right", f)
 	await _chained_settle(ch.balls[1])
@@ -3507,7 +3285,6 @@ func _try_stairs(f: int, off: int) -> bool:
 	return ok
 
 
-## Cầu bập bênh: hai lần nhảy đôi (`h` rồi `t` khung), lệch giờ `off`.
 func _try_seesaw(h: int, t: int, off: int) -> bool:
 	var r := await _try_pair(1, 51.8, 50.6, 19, [[h, h, off, 60], [t, t, off, 120]])
 	var ch: Chained = r[0]
@@ -3516,7 +3293,6 @@ func _try_seesaw(h: int, t: int, off: int) -> bool:
 	return ok
 
 
-## Tháp lò xo (màn 2): người chơi 2 đứng ở cột `p2col` neo, người chơi 1 đứng ở `p1col` nhảy `c1` khung lên lò xo rồi giữ phải; xong người chơi 2 nhảy trái `c2` khung lên lò xo (người chơi 1 neo trên ledge).
 func _try_tower(p1col: float, p2col: float, c1: int, c2: int) -> bool:
 	var ch := await _make_chained(1)
 	var a := ch.balls[0]
@@ -3554,7 +3330,6 @@ func _try_tower(p1col: float, p2col: float, c1: int, c2: int) -> bool:
 	return ok
 
 
-## Thang máy màn 2: hai người ở mép tháp (cột `c1`, `c2`, hàng 13), nhảy đôi lên thang (`h1` / `h2` khung, lệch giờ `off`) lúc thang ở đáy, chờ lên đỉnh, nhảy đôi sang cao nguyên (`e` khung).
 func _try_lift2(c1: float, c2: float, h1: int, h2: int, off: int, e: int, e_off: int) -> bool:
 	var ch := await _make_chained(1)
 	var a := ch.balls[0]
@@ -3578,7 +3353,6 @@ func _try_lift2(c1: float, c2: float, h1: int, h2: int, off: int, e: int, e_off:
 	return ok
 
 
-## Hầm trần gai màn 3: hai người ở (`c1`, `c2`, hàng 19) nhảy đôi `f` khung (lệch giờ `off`) qua cụm gai đầu tiên; ok nếu cả hai đáp xuống sàn trong [`lo`, `hi`) và còn sống.
 func _try_tunnel(c1: float, c2: float, f: int, off: int, lo: float, hi: float, clear := false) -> bool:
 	var r := await _try_pair(2, c1, c2, 19, [[f, f, off, 70]], [], clear)
 	var ch: Chained = r[0]
@@ -3587,7 +3361,6 @@ func _try_tunnel(c1: float, c2: float, f: int, off: int, lo: float, hi: float, c
 	return ok
 
 
-## Nhảy đôi từ ledge xuống đảo (màn 3): hai người ở (`c1`, `c2`, hàng 13) nhảy `f1` / `f2` khung, lệch giờ `off`; ok nếu cả hai đứng trên đảo (cột >= `far`, hàng 19) và còn sống.
 func _try_leap(c1: float, c2: float, f1: int, f2: int, off: int, far: float, limit: float) -> bool:
 	var r := await _try_pair(2, c1, c2, 13, [[f1, f2, off, 0]])
 	var ch: Chained = r[0]
@@ -3599,7 +3372,6 @@ func _try_leap(c1: float, c2: float, f1: int, f2: int, off: int, far: float, lim
 	return ok
 
 
-## Chờ thang máy (`plat`) tới đáy (`bottom` = true) hoặc tới đỉnh (false); `skip` khung đầu bỏ qua (để chờ lượt tới kế tiếp).
 func _chained_wait_lift(plat: MovingPlatform, bottom: bool, skip := 0) -> void:
 	for f in 2000:
 		await _frames(1)
@@ -3607,7 +3379,6 @@ func _chained_wait_lift(plat: MovingPlatform, bottom: bool, skip := 0) -> void:
 			return
 
 
-## Kiểm tra một cửa sổ dung sai: `fn` (nhận một giá trị, trả bool) phải thành công ở mọi giá trị trong `points` (hai mép và giữa cửa sổ). In ra giá trị nào hỏng.
 func _window(what: String, points: Array, fn: Callable) -> void:
 	var bad := []
 	for p in points:
@@ -3617,7 +3388,6 @@ func _window(what: String, points: Array, fn: Callable) -> void:
 	_expect(bad.is_empty(), "%s: succeeds at %s%s" % [what, str(points), "" if bad.is_empty() else "  FAILS at %s" % str(bad)])
 
 
-## Thang máy màn 3 (cả hai cùng đi): hai người ở mép hầm (cột `c1`, `c2`, hàng 19) nhảy lên thang lúc ở đáy (`h1` / `h2` khung, lệch giờ `off`), chờ lên đỉnh, nhảy đôi `e` khung (lệch giờ `e_off`) sang ledge dưới trần gai.
 func _try_lift3(h1: int, h2: int, off: int, e: int, e_off: int, c1 := 105.0, c2 := 103.9) -> bool:
 	var ch := await _make_chained(2)
 	var a := ch.balls[0]
@@ -3636,7 +3406,6 @@ func _try_lift3(h1: int, h2: int, off: int, e: int, e_off: int, c1 := 105.0, c2 
 	return ok
 
 
-## Màn 2 và màn 3 của Chained.
 func _chained_levels_23_checks() -> void:
 	for c in get_children():
 		c.queue_free()
@@ -3646,28 +3415,27 @@ func _chained_levels_23_checks() -> void:
 	await _chained_level2_checks()
 	_chained_static_checks(2, 130, 170, 15, 22, 3, 2, 3)
 	await _chained_level3_checks()
-	var level1_problems := _chained_star_problems(_chained_rows(ChainedData.LEVELS[0]["map"]))   # quy tắc "sao với tới được" cũng đúng với màn 1 (đã chơi thử)
+	var level1_problems := _chained_star_problems(_chained_rows(ChainedData.LEVELS[0]["map"]))
 	_expect(level1_problems.is_empty(), "level 1: the star reachability rule agrees with the hand-tested level (%s)" % str(level1_problems))
 	await _chained_flow_checks()
 
 
-## Chuyển màn thật bằng Game.start_chained: màn 1 -> về đích -> Next level -> màn 2 -> về đích -> Next level -> màn 3 -> về đích: bảng kết quả không còn nút Next, tổng sao cộng dồn.
 func _chained_flow_checks() -> void:
 	for c in get_children():
 		c.queue_free()
 	await _frames(3)
 	var tree := get_tree()
-	var home := tree.current_scene                         # cảnh bài test: gỡ khỏi current_scene để đổi cảnh thật không xoá mất bài test
+	var home := tree.current_scene
 	tree.current_scene = null
-	Game.chained_totals[0] = 9                             # tổng cũ: vào màn đầu thì phải về 0
+	Game.chained_totals[0] = 9
 	Game.chained_totals[1] = 9
-	var bead_sets := [[0.1, 0.2, 0.8], [0.1, 0.9, 0.8, 0.7], [0.2]]   # số hạt mỗi màn: (2, 1), (1, 3), (1, 0)
+	var bead_sets := [[0.1, 0.2, 0.8], [0.1, 0.9, 0.8, 0.7], [0.2]]
 	var expected_totals := [Vector2i(2, 1), Vector2i(3, 4), Vector2i(4, 4)]
 	var names := ["Tied Together", "Up and Over", "Chain Reaction"]
 	var old_scene: Node = null
 	Game.start_chained(0)
 	for index in 3:
-		await _frames(5)                                   # cảnh mới được dựng ở cuối khung
+		await _frames(5)
 		var cur := tree.current_scene as Chained
 		_expect(cur != null and Game.chained_index == index and cur.level_name == names[index] and cur != old_scene, "flow: level %d is '%s' (Game.chained_index %d)" % [index + 1, names[index], Game.chained_index])
 		if index == 0:
@@ -3675,7 +3443,7 @@ func _chained_flow_checks() -> void:
 		else:
 			_expect(old_scene == null or not is_instance_valid(old_scene) or old_scene.is_queued_for_deletion(), "flow: the previous level scene was replaced")
 		cur.finish_panel_delay = 0.2
-		for i in 300:                                      # chờ hết phần giới thiệu
+		for i in 300:
 			if cur.match_running:
 				break
 			await _frames(1)
@@ -3695,7 +3463,7 @@ func _chained_flow_checks() -> void:
 		if index < 2:
 			_expect(cur.hud.next_button != null, "flow: the result panel of level %d offers Next level" % (index + 1))
 			old_scene = cur
-			cur.hud.next_button.pressed.emit()             # bấm Next level: Game.start_chained(chỉ số + 1), đổi cảnh thật
+			cur.hud.next_button.pressed.emit()
 		else:
 			_expect(cur.hud.result_panel != null and cur.hud.next_button == null and cur.hud.retry_button != null and cur.hud.menu_button != null and not cur.has_next_level(), "flow: the result panel of the last level has no Next level, only Retry and Menu")
 			_release_all_keys()
@@ -3708,7 +3476,6 @@ func _chained_flow_checks() -> void:
 	Game.chained_totals[1] = 0
 
 
-## Màn 3 "Chain Reaction": ba khe liền nhau (súng cao su), hầm trần gai, thang máy trong giếng, nhảy đôi qua khe 12 ô, đoạn quái dưới trần gai.
 func _chained_level3_checks() -> void:
 	var ch := await _make_chained(2)
 	var a := ch.balls[0]
@@ -3717,24 +3484,21 @@ func _chained_level3_checks() -> void:
 	_expect(ch.level_name == "Chain Reaction" and ch.spawn_points.size() == 2 and ch.spawn_points[0].distance_to(ch.spawn_points[1]) < 160.0, "level 3: builds as 'Chain Reaction' with both spawns close together (%s)" % str(ch.spawn_points))
 	_expect(lv.star_total == 20 and a.on_ground and b.on_ground and ch.match_running and ch.lives == Chained.LIVES, "level 3: %d stars, both players start on the ground and alive" % lv.star_total)
 
-	# --- chuỗi ba khe 7 ô (đảo thấp dần 2 ô mỗi lần): mỗi khe một lần súng cao su, người chơi 1 theo sau bằng cú nhảy vừa lực ---
 	var beads1 := await _chained_sling(ch, "level 3 gap 1", 14, 13, 22, 16)
 	var beads2 := await _chained_sling(ch, "level 3 gap 2", 35, 15, 43, 16)
 	var beads3 := await _chained_sling(ch, "level 3 gap 3", 56, 17, 64, 30)
 	_expect(beads1 >= 2 and beads2 >= 2 and beads3 >= 2, "level 3 chain: the stars on the flight paths of the three slingshots are collected (%d, %d, %d new beads)" % [beads1, beads2, beads3])
 	await _free_chained(ch)
 
-	# --- dung sai: ba khe súng cao su ---
 	for gap in [["a", 14, 13, 22], ["b", 35, 15, 43], ["c", 56, 17, 64]]:
 		var tag: String = "level 3 gap " + gap[0]
 		await _window(tag + ": player 2 charges 30 / 40 / 50 frames (back-off 290 px)", [30, 40, 50], func(f): return await _try_sling(2, gap[1], gap[2], gap[3], 290.0, f, 16))
 		await _window(tag + ": player 2 backs off 250 / 290 / 320 px (a stretch window of 70 px)", [250, 290, 320], func(d): return await _try_sling(2, gap[1], gap[2], gap[3], float(d), 50, 16))
-		var follow: Array = [12, 30, 50] if gap[0] == "c" else [12, 17, 22]   # (hai khe đầu: nhảy 24..34 khung thì rơi xuống khe kế tiếp; nhảy đầy lực 36+ khung bay qua luôn)
+		var follow: Array = [12, 30, 50] if gap[0] == "c" else [12, 17, 22]
 		await _window(tag + ": player 1 follows with " + str(follow) + " frames", follow, func(f): return await _try_sling(2, gap[1], gap[2], gap[3], 290.0, 50, f))
 		if gap[0] != "c":
 			await _window(tag + ": ... or with full power (36 / 42 / 50 frames; holding longer than 42 is the same jump)", [36, 42, 50], func(f): return await _try_sling(2, gap[1], gap[2], gap[3], 290.0, 50, f))
 
-	# --- hầm trần gai: hai cụm gai sàn rộng 2 ô, nhảy vừa lực (14..30 khung); nhảy gần đầy lực chạm gai trần ---
 	await _window("level 3 tunnel, first spike pad: jump of 14 / 22 / 30 frames", [14, 22, 30], func(f): return await _try_tunnel(81.4, 80.3, f, 0, 84.0, 94.0))
 	await _window("level 3 tunnel, first spike pad: players start 6 frames apart, either order", [-6, 6], func(o): return await _try_tunnel(81.4, 80.3, 22, o, 84.0, 94.0))
 	await _window("level 3 tunnel, second spike pad: jump of 14 / 22 / 30 frames", [14, 22, 30], func(f): return await _try_tunnel(93.4, 92.3, f, 0, 96.0, 106.0))
@@ -3748,21 +3512,19 @@ func _chained_level3_checks() -> void:
 	_expect(deaths == ["hurt"] and ch.lives == Chained.LIVES - 1, "level 3 tunnel: a near-full-power jump (40 frames) hits the ceiling spikes and kills both (deaths %s, lives %d)" % [str(deaths), ch.lives])
 	await _free_chained(ch)
 
-	# --- thang máy trong giếng: cả hai lên thang ở đáy rồi nhảy sang ledge dưới trần gai (nhảy quá cao chạm gai) ---
 	await _window("level 3 lift: player 1 boards with 12 / 19 / 26 frames (player 2: 14)", [12, 19, 26], func(h): return await _try_lift3(h, 14, 0, 20, 0))
 	await _window("level 3 lift: player 2 boards with 14 / 22 / 30 frames (player 1: 10)", [14, 22, 30], func(h): return await _try_lift3(10, h, 0, 20, 0))
 	await _window("level 3 lift: boarding 6 frames apart, either order", [-6, 6], func(o): return await _try_lift3(10, 14, o, 20, 0))
 	await _window("level 3 lift: both hop to the ledge with 16 / 24 / 34 frames (higher hits the roof spikes)", [16, 24, 34], func(e): return await _try_lift3(10, 14, 0, e, 0))
 	await _window("level 3 lift: ... starting that hop 6 frames apart, either order", [-6, 6], func(o): return await _try_lift3(10, 14, 0, 20, o))
 
-	# --- nhảy đôi từ ledge xuống đảo qua khe 8 ô: nhảy lệch một người thì dây kéo người kia xuống hố; hai người nhảy đủ mạnh (24 khung trở lên, đầy lực cũng được) thì qua ---
 	ch = await _make_chained(2)
 	a = ch.balls[0]
 	b = ch.balls[1]
 	deaths.clear()
 	ch.players_died.connect(func(cause: String) -> void: deaths.append(cause))
 	await _chained_move(ch, _cpos(126.4, 13), _cpos(125.2, 13), 40)
-	await _chained_jump("p1_", "right", 32)                 # chỉ người chơi 1 nhảy: người chơi 2 bị dây giật xuống khe
+	await _chained_jump("p1_", "right", 32)
 	await _frames(240)
 	_expect(not deaths.is_empty() and ch.lives == Chained.LIVES - 1, "level 3 leap: a lone jump over the 8-tile gap fails, the partner is dragged into the pit (deaths %s, lives %d)" % [str(deaths), ch.lives])
 	await _free_chained(ch)
@@ -3775,13 +3537,11 @@ func _chained_level3_checks() -> void:
 	b = ch.balls[1]
 	lv = ch.level
 
-	# --- đoạn quái: hai cụm gai, hai ô giữa mỗi ô có hai con quái đi tuần ---
 	var enemies: Array[Enemy] = []
 	for n in lv.get_children():
 		if n is Enemy:
 			enemies.append(n)
 	_expect(enemies.size() == 4, "level 3 gauntlet: four patrolling enemies in the cell after the spike pad")
-	# mỗi con quái bị dẫm từ trên xuống là chết (không phải người chơi bị thương): thả người chơi 1 từ trên cao xuống đầu từng con
 	var stomped_all := true
 	for e in enemies:
 		var ex := e.global_position.x
@@ -3792,7 +3552,6 @@ func _chained_level3_checks() -> void:
 				break
 		stomped_all = stomped_all and e.dead and ch.lives == Chained.LIVES
 	_expect(stomped_all, "level 3 gauntlet: landing on top of each enemy squashes it and nobody gets hurt (lives %d)" % ch.lives)
-	# đoạn quái đã dọn: cụm gai rộng 2 ô, ô sau rộng 10 ô, trần gai chỉ cho nhảy vừa lực; đi hết tới cờ đích
 	await _chained_move(ch, _cpos(149.4, 19), _cpos(148.3, 19), 60)
 	await _chained_hop2(19, 19, 100)
 	var before_flag := ch.lives == Chained.LIVES and not ch.finished and a.global_position.x > 152.0 * 32.0 and b.global_position.x > 152.0 * 32.0
@@ -3803,7 +3562,6 @@ func _chained_level3_checks() -> void:
 	await _window("level 3 gauntlet: ... players starting 6 frames apart, either order (19 frames)", [-6, 6], func(o): return await _try_tunnel(149.4, 148.3, 19, o, 152.0, 162.0, true))
 
 
-## Màn 2 "Up and Over": cầu thang, cầu bập bênh, tháp lò xo, thang máy, súng cao su trên cao, bậc thang xuống đích.
 func _chained_level2_checks() -> void:
 	var ch := await _make_chained(1)
 	var a := ch.balls[0]
@@ -3814,13 +3572,11 @@ func _chained_level2_checks() -> void:
 
 	await _free_chained(ch)
 
-	# --- Dung sai: mỗi đoạn khó phải qua được trong một khoảng số khung giữ phím đủ rộng (>= 12 khung = 0,2 giây), hai người nhảy cùng lúc thì chấp nhận lệch giờ +-6 khung ---
 	await _window("level 2 stairs: a single hop of 17 / 24 / 31 frames from the floor reaches the 1-tile steps (window 17..31 frames, 15 wide)", [17, 24, 31], func(f): return await _try_stairs(f, 0))
 	await _window("level 2 seesaw pit: the first double hop of 8 / 20 / 30 frames (second hop 26)", [8, 20, 30], func(h): return await _try_seesaw(h, 26, 0))
 	await _window("level 2 seesaw pit: the second double hop of 10 / 22 / 34 frames (first hop 22)", [10, 22, 34], func(t): return await _try_seesaw(22, t, 0))
 	await _window("level 2 seesaw pit: players starting 6 frames apart, either order (hops 22 and 26)", [-6, 6], func(o): return await _try_seesaw(22, 26, o))
 
-	# --- tháp 6 ô (người chơi 1 đứng cạnh dải lò xo, người chơi 2 neo cạnh đó): không lò xo thì không lên được; có lò xo thì cả hai lần lượt lên được ---
 	ch = await _make_chained(1)
 	a = ch.balls[0]
 	await _chained_move(ch, _cpos(70.0, 19), _cpos(68.6, 19), 30)
@@ -3835,14 +3591,12 @@ func _chained_level2_checks() -> void:
 	await _window("level 2 tower: player 2 (rope helping) hops onto the strip with 6 / 16 / 26 frames", [6, 16, 26], func(c): return await _try_tower(62.4, 68.7, 8, c))
 	await _window("level 2 tower: player 2 waits at column 67.0 / 68.7 / 70.0", [67.0, 68.7, 70.0], func(c): return await _try_tower(62.4, c, 8, 16))
 
-	# --- thang máy: cả hai lên thang ở đáy, lên đỉnh, nhảy sang cao nguyên ---
 	await _window("level 2 lift: player 1 boards with 10 / 17 / 24 frames (player 2: 8)", [10, 17, 24], func(h): return await _try_lift2(83.2, 85.0, h, 8, 0, 14, 0))
 	await _window("level 2 lift: player 2 boards with 7 / 14 / 20 frames (player 1: 12)", [7, 14, 20], func(h): return await _try_lift2(83.2, 85.0, 12, h, 0, 14, 0))
 	await _window("level 2 lift: players start 6 frames apart, either order", [-6, 6], func(o): return await _try_lift2(83.2, 85.0, 12, 8, o, 14, 0))
 	await _window("level 2 lift: both hop off at the top with 14 / 24 / 34 frames", [14, 24, 34], func(e): return await _try_lift2(83.2, 85.0, 12, 8, 0, e, 0))
 	await _window("level 2 lift: ... starting the exit hop 6 frames apart, either order", [-6, 6], func(o): return await _try_lift2(83.2, 85.0, 12, 8, 0, 20, o))
 
-	# --- khe 7 ô trên cao: súng cao su (hai sao nằm trên đường bay); người chơi 2 nhảy từ chỗ lùi xa vừa phải ---
 	ch = await _make_chained(1)
 	var new_beads := await _chained_sling(ch, "level 2 gap", 101, 7, 109)
 	_expect(new_beads >= 2, "level 2 gap: the stars on the flight path of the slingshot are collected (%d new beads)" % new_beads)
@@ -3851,7 +3605,6 @@ func _chained_level2_checks() -> void:
 	await _window("level 2 gap: player 2 backs off 240 / 280 / 320 px (a stretch window of 80 px, 2.5 tiles)", [240, 280, 320], func(d): return await _try_sling(1, 101, 7, 109, float(d), 50, 45))
 	await _window("level 2 gap: player 1 follows with 12 / 30 / 50 frames", [12, 30, 50], func(f): return await _try_sling(1, 101, 7, 109, 290.0, 50, f))
 
-	# --- bậc thang xuống đích ---
 	ch = await _make_chained(1)
 	a = ch.balls[0]
 	b = ch.balls[1]
@@ -3862,8 +3615,8 @@ func _chained_level2_checks() -> void:
 			ok = await _chained_hop_to(a, "p1_", step[0] + 0.4, step[1], 14)
 		if ok:
 			ok = await _chained_hop_to(b, "p2_", step[0] + 0.4, step[1], 14)
-	await _chained_hop2(14, 14, 60)                        # xuống bậc 3
+	await _chained_hop2(14, 14, 60)
 	_expect(ok and ch.lives == Chained.LIVES, "level 2 descent: both players hop down the three stairs (a x %.1f, b x %.1f)" % [a.global_position.x / 32.0, b.global_position.x / 32.0])
-	await _chained_hop2(14, 14, 120)                       # xuống sàn cuối, qua lá cờ đích
+	await _chained_hop2(14, 14, 120)
 	_expect(ch.finished and ch.lives == Chained.LIVES, "level 2 finish: the pair drops onto the last floor and touches the finish flag (finished %s, lives %d)" % [str(ch.finished), ch.lives])
 	await _free_chained(ch)

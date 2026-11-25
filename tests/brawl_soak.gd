@@ -1,30 +1,24 @@
 extends Node
-## Hai bot đấu nhau trọn trận (có sự kiện ngẫu nhiên và vật phẩm) để dò lỗi lúc chạy. Chạy:
-##   godot --headless --fixed-fps 60 --path . res://tests/brawl_soak.tscn
-## Mỗi trận in: người thắng, tỉ số, thời lượng, điểm theo nguyên nhân, vật phẩm đã dùng, sự kiện đã thấy, và dòng "ANOMALY" nếu có chuyện lạ
-## (bóng còn sống mà ra ngoài đấu trường, quá 95 giây không ai ghi điểm, trận không kết thúc). Lỗi script thì xem dòng SCRIPT ERROR trong log.
-## Cuối cùng in "BRAWL SOAK DONE" kèm tổng kết.
 
-const MATCH_LIMIT := 60 * 600           # một trận tối đa 600 giây (36000 khung), quá là coi như không kết thúc
-const IDLE_LIMIT := 95.0                # quá bấy nhiêu giây không ai ghi điểm là bất thường: gai sàn mọc từ giây 30, kín sau ~32 giây, chờ 4 giây rồi hàng gai dâng (~21 giây tới trần) = tối đa ~87 giây
-## Các trận: [chỉ số đấu trường, độ giỏi bot P1, độ giỏi bot P2]. Sáu trận cân bằng, rồi hai cặp lệch trình để thấy độ giỏi có tác dụng.
+const MATCH_LIMIT := 60 * 600
+const IDLE_LIMIT := 95.0
 const MATCHES := [
 	[0, 0.6, 0.6], [1, 0.6, 0.6], [0, 0.6, 0.6], [1, 0.6, 0.6], [0, 0.6, 0.6], [1, 0.6, 0.6],
 	[0, 0.3, 0.9], [1, 0.9, 0.3], [0, 0.2, 0.9], [1, 0.9, 0.2],
 ]
 
-var anomalies := 0                      # tổng số bất thường
-var _totals := {}                       # tổng kết: nguyên nhân -> số điểm
-var _item_totals := {}                  # tổng kết: vật phẩm -> số lần dùng
-var _event_totals := {}                 # tổng kết: sự kiện -> số lần thấy
-var _wins := [0, 0]                     # số trận thắng của bot P1 / P2
-var _skill_wins := {}                   # số trận thắng theo độ giỏi: "0.3" -> ...
+var anomalies := 0
+var _totals := {}
+var _item_totals := {}
+var _event_totals := {}
+var _wins := [0, 0]
+var _skill_wins := {}
 
 
 func _ready() -> void:
-	Game.save_enabled = false                       # không ghi đè file lưu thật
-	var total_seconds := 0.0                        # tổng thời lượng các trận
-	var finished := 0                               # số trận đã kết thúc
+	Game.save_enabled = false
+	var total_seconds := 0.0
+	var finished := 0
 	for m in MATCHES.size():
 		var cfg: Array = MATCHES[m]
 		var result := await _play_match(m, cfg[0], cfg[1], cfg[2])
@@ -43,46 +37,45 @@ func _ready() -> void:
 	get_tree().quit()
 
 
-## Chơi một trận hai bot. Trả về {"finished": bool, "seconds": float}.
 func _play_match(index: int, arena: int, skill1: float, skill2: float) -> Dictionary:
-	Game.brawl_vs_bot = true                        # Brawl tự tạo bot cho người chơi 2
+	Game.brawl_vs_bot = true
 	var br: Brawl = load("res://scenes/brawl.tscn").instantiate()
 	br.arena_index = arena
-	br.intro_seconds = 0.3                          # giới thiệu ngắn
+	br.intro_seconds = 0.3
 	br.win_panel_delay = 0.2
-	add_child(br)                                   # events và items bật sẵn, đúng như khi chơi thật
+	add_child(br)
 	var bot2: BrawlBot = br.bot
 	bot2.skill = skill2
-	var bot1 := BrawlBot.new()                      # bot thứ hai cho người chơi 1 (chỉ bài test này)
+	var bot1 := BrawlBot.new()
 	bot1.name = "Bot1"
 	bot1.player_index = 0
 	bot1.skill = skill1
 	br.add_child(bot1)
-	var causes := {}                                # nguyên nhân -> số điểm trong trận này
-	var events_seen := {}                           # sự kiện -> số lần thấy
-	var items_used := {}                            # vật phẩm -> số lần dùng
+	var causes := {}
+	var events_seen := {}
+	var items_used := {}
 	br.point_scored.connect(func(_s: Ball, _v: Ball, cause: String) -> void: causes[cause] = causes.get(cause, 0) + 1)
 	br.events.event_started.connect(func(id: String) -> void: events_seen[id] = events_seen.get(id, 0) + 1)
 	br.items.item_used.connect(func(_b: Ball, id: String) -> void: items_used[id] = items_used.get(id, 0) + 1)
 	var frames := 0
-	var last_change := 0                            # khung có điểm gần nhất
-	var last_total := 0                             # tổng điểm lần trước
-	var max_gap := 0                                # khoảng không ai ghi điểm dài nhất (khung)
-	var outside := 0                                # số khung có bóng sống nằm ngoài đấu trường
+	var last_change := 0
+	var last_total := 0
+	var max_gap := 0
+	var outside := 0
 	while frames < MATCH_LIMIT:
 		await get_tree().physics_frame
 		frames += 1
-		if br.winner != null:                       # hết trận
+		if br.winner != null:
 			break
-		if not br.match_running:                    # đang giới thiệu: chưa tính
+		if not br.match_running:
 			last_change = frames
 			continue
 		var total: int = br.scores[0] + br.scores[1]
-		if total != last_total:                     # có điểm mới
+		if total != last_total:
 			last_total = total
 			max_gap = maxi(max_gap, frames - last_change)
 			last_change = frames
-		for ball in br.balls:                       # bóng còn sống mà ở ngoài đấu trường
+		for ball in br.balls:
 			var p := ball.global_position
 			if not ball.dead and (p.x < -20.0 or p.x > br.arena_rect.size.x + 20.0 or p.y < -60.0 or p.y > br.arena_rect.size.y + 120.0):
 				outside += 1
@@ -107,7 +100,7 @@ func _play_match(index: int, arena: int, skill1: float, skill2: float) -> Dictio
 	if max_gap > int(IDLE_LIMIT * 60.0):
 		print("ANOMALY %s: no score change for %.0f s (a player stuck alive?)" % [tag, max_gap / 60.0])
 		anomalies += 1
-	if not bot1.held_actions().is_empty() or not bot2.held_actions().is_empty():   # hết trận mà bot còn giữ phím
+	if not bot1.held_actions().is_empty() or not bot2.held_actions().is_empty():
 		print("ANOMALY %s: a bot still holds keys after the match: %s %s" % [tag, bot1.held_actions(), bot2.held_actions()])
 		anomalies += 1
 	for k in causes:

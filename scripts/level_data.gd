@@ -1,26 +1,4 @@
 class_name LevelData
-## Các màn thường (chơi từng màn, có đích). Mỗi ký tự là một ô 32 x 32 pixel.
-## Sửa thẳng các ký tự dưới đây rồi bấm F5 là thấy màn thay đổi.
-##
-##   .  ô trống                 #  đất / tường
-##   O  chỗ xuất phát           F  đích (cờ hồng)
-##   *  ngôi sao                K  cờ lưu (chết thì hồi sinh ở đây)
-##   ^  gai mọc từ đất          v  gai treo trên trần
-##   e  quái đi tuần            x  thùng gỗ (đẩy được)
-##   T  lò xo                   S  bập bênh (ván dài 5 ô, trục ở ô này)
-##   a b d  nút đạp             A B D  cửa (mở khi nút cùng chữ thường bị đè)
-##   ===  bệ di chuyển (liền nhau = một bệ)
-##   >    điểm đến của bệ theo chiều ngang (cùng hàng với bệ)
-##   |    điểm đến của bệ theo chiều dọc (cùng cột với ô đầu tiên của bệ)
-##   /  \  dốc đứng đi lên / đi xuống    1 2  dốc thoải đi lên (đặt liền nhau)    3 4  dốc thoải đi xuống
-##   +  trái tim (+1 mạng)      h  khiên (đỡ 1 đòn)      g  súng (+15 đạn, bấm F hoặc J để bắn)
-##   M  boss (đặt trên mặt đất)  G  cổng (mở khi hạ boss)
-##   j  mũi tên xanh (jump boost: nhảy cao hơn trong 10 giây)
-##
-## Bản đồ viết trong chuỗi r"""...""" (chuỗi thô) để dấu \ của dốc giữ nguyên.
-## Thêm màn: chép một khối {"name": ..., "map": r"""..."""} và sửa. Menu tự hiện màn mới.
-## Số đo để thiết kế (giữ A/D rồi bấm nhảy): bấm ngay cao 1 ô; nửa lực cao 3 ô xa 7 ô;
-## 3/4 lực cao 4.4 ô xa 12 ô; đủ lực cao 5 ô xa 18 ô; nhảy thẳng (không giữ A/D) cao 4 ô; lò xo cao khoảng 9 ô.
 
 const LEVELS := [
 	{"name": "First Bounce", "map": r"""

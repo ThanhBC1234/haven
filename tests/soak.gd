@@ -1,17 +1,13 @@
 extends Node
-## Bot chơi ngẫu nhiên để dò lỗi lúc chạy (lỗi script, kẹt, rơi ra ngoài màn). Chạy:
-##   godot --headless --fixed-fps 60 --path . res://tests/soak.tscn
-## In ra thống kê từng lượt; dòng "ANOMALY" là chỗ đáng xem lại.
 
 var rng := RandomNumberGenerator.new()
-var _hold := 0          # còn giữ phím hướng bao nhiêu khung
-var _dir := "right"     # phím hướng đang giữ
+var _hold := 0
+var _dir := "right"
 
 
 func _ready() -> void:
 	Game.save_enabled = false
 	rng.seed = 12345
-	# --- Chế độ vô tận: 6 lượt, mỗi lượt tối đa 6000 khung (100 giây) ---
 	for run in 6:
 		var e: Node = load("res://scenes/endless.tscn").instantiate()
 		add_child(e)
@@ -48,7 +44,6 @@ func _ready() -> void:
 		e.queue_free()
 		await _frames(3)
 
-	# --- Các màn thường: bot chơi 4000 khung mỗi màn, mạng vô hạn ---
 	for i in LevelData.LEVELS.size():
 		Game.level_index = i
 		var play: Node = load("res://scenes/play.tscn").instantiate()
@@ -60,11 +55,11 @@ func _ready() -> void:
 		var last_death := -1000
 		var deaths := 0
 		for f in 4000:
-			play.lives = maxi(play.lives, 50)      # không để hết mạng (hết mạng sẽ đổi cảnh)
+			play.lives = maxi(play.lives, 50)
 			_bot_input(0.8)
 			await _frames(1)
 			if play._busy and play.hud._panel != null:
-				break                              # tới đích
+				break
 			if play.lives < last_lives2:
 				deaths += 1
 				if f - last_death < 110:
@@ -87,7 +82,6 @@ func _ready() -> void:
 	get_tree().quit()
 
 
-## Bot: giữ một phím hướng một lúc rồi bấm nhảy; thỉnh thoảng bắn.
 func _bot_input(right_bias: float) -> void:
 	Input.action_release("jump")
 	Input.action_release("shoot")

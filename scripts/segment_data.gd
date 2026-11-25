@@ -1,17 +1,5 @@
 class_name SegmentData
-## Các ĐOẠN cho chế độ vô tận (Endless Run). Game ghép ngẫu nhiên các đoạn này nối tiếp nhau mãi.
-## Ký tự giống hệt level_data.gd. Quy tắc cho một đoạn:
-##   - Cao đúng 18 hàng; đất ở 2 hàng cuối.
-##   - KHÔNG có tường hai bên; 4 cột đầu và 4 cột cuối là đất bằng để nối với đoạn khác.
-##   - Có 'O' ở cột 2 hàng 16 (từ trên xuống): chết trong đoạn này thì hồi sinh ở đó.
-##   - Không dùng thùng, nút, cửa, boss (không hợp chạy vô tận; boss có đấu trường riêng BOSS_ARENA).
-##   - Dùng được dốc (/ \ 1 2 3 4), trái tim +, khiên h, súng g, jump boost j. Bảng ký tự đầy đủ ở level_data.gd.
-##   - Bản đồ viết trong chuỗi r"""...""" (chuỗi thô) để dấu \ của dốc giữ nguyên.
-##   - "difficulty": 1 dễ, 2 vừa, 3 khó. Đầu lượt chỉ ra đoạn dễ, càng đi xa càng có đoạn khó.
-## THÊM ĐOẠN MỚI: chép một khối {"name": ..., "difficulty": ..., "map": r"""..."""} vào SEGMENTS.
-## Đoạn mới tự được đưa vào vòng ngẫu nhiên, không cần sửa code.
 
-## Đoạn mở đầu mỗi lượt (không nằm trong vòng ngẫu nhiên).
 const START := r"""
 ..............................
 ..............................
@@ -33,7 +21,6 @@ const START := r"""
 ##############################
 """
 
-## Đấu trường boss: chèn tự động sau mỗi vài đoạn (xem BOSS_EVERY trong endless.gd). Cổng G mở khi hạ boss M.
 const BOSS_ARENA := r"""
 ............................................G.....
 ............................................G.....

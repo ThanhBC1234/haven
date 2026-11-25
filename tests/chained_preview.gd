@@ -1,6 +1,4 @@
 extends Node
-## Chụp chế độ Chained. Chạy có cửa sổ: godot --path . res://tests/chained_preview.tscn -- --shots=<thư mục>
-## Ảnh: menu, đầu màn (READY...), dây căng có hạt trượt về người đứng thấp, một người neo còn người kia lơ lửng trên khe, bảng kết quả, toàn cảnh màn.
 
 var dir := ""
 
@@ -9,15 +7,14 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shots="):
 			dir = a.trim_prefix("--shots=")
-	Game.save_enabled = false                       # không ghi đè file lưu thật
+	Game.save_enabled = false
 	await _menu_shot()
 	await _level_shots()
-	await _new_level_shots(1, "level2", [[62.4, 19, 68.7, 19], [83.5, 13, 85.0, 13]])   # tháp lò xo (người chơi 2 neo), ledge cạnh thang máy
-	await _new_level_shots(2, "level3", [[80.0, 19, 78.8, 19], [104.5, 19, 103.4, 19]])  # cửa hầm trần gai, trước thang máy
+	await _new_level_shots(1, "level2", [[62.4, 19, 68.7, 19], [83.5, 13, 85.0, 13]])
+	await _new_level_shots(2, "level3", [[80.0, 19, 78.8, 19], [104.5, 19, 103.4, 19]])
 	get_tree().quit()
 
 
-## Ảnh menu có nút CHAINED 2P.
 func _menu_shot() -> void:
 	var menu: Control = load("res://scenes/menu.tscn").instantiate()
 	add_child(menu)
@@ -27,7 +24,6 @@ func _menu_shot() -> void:
 	await _frames(3)
 
 
-## Dựng cảnh Chained, giới thiệu dài một chút để kịp chụp READY...
 func _start(index := 0) -> Chained:
 	Game.chained_index = index
 	Game.chained_totals[0] = 0
@@ -47,7 +43,6 @@ func _wait_running(ch: Chained) -> void:
 		await get_tree().physics_frame
 
 
-## Đặt hai quả bóng ở toạ độ cột / hàng của bản đồ (giữa ô, đứng trên mặt ô).
 func _place(ch: Chained, i: int, col: float, row: float) -> void:
 	ch.balls[i].teleport(Vector2(col * 32.0, (row + 1) * 32.0 - 16.0))
 
@@ -55,37 +50,34 @@ func _place(ch: Chained, i: int, col: float, row: float) -> void:
 func _level_shots() -> void:
 	var ch := await _start()
 	await _frames(20)
-	await _shot("level_start_ready")                 # đang READY...
+	await _shot("level_start_ready")
 	await _wait_running(ch)
 	await _frames(40)
 
-	# --- dây căng, hạt trượt về phía người đứng thấp (người chơi 2 xuống thung lũng); cả hai neo để dây giữ căng ---
 	Input.action_press("p1_use")
 	Input.action_press("p2_use")
-	_place(ch, 0, 31.5, 15)                          # người chơi 1 trên bờ thung lũng
-	_place(ch, 1, 39.5, 19)                          # người chơi 2 ở đáy thung lũng
+	_place(ch, 0, 31.5, 15)
+	_place(ch, 1, 39.5, 19)
 	await _frames(40)
 	for i in 6:
-		ch.level.collect_star(ch.balls[i % 2])       # nhặt sao: hạt mới xuất hiện ở giữa dây
+		ch.level.collect_star(ch.balls[i % 2])
 		await _frames(8)
-	await _frames(90)                                # hạt trượt về phía người chơi 2 (thấp hơn)
+	await _frames(90)
 	await _shot("rope_stretched_beads")
 	Input.action_release("p1_use")
 	Input.action_release("p2_use")
 
-	# --- một người neo ở mép khe, người kia rơi xuống khe và lơ lửng trên dây ---
 	ch.rope.reset()
-	Input.action_press("p1_use")                     # người chơi 1 neo
-	_place(ch, 0, 63.5, 15)                          # người chơi 1 ở mép khe
+	Input.action_press("p1_use")
+	_place(ch, 0, 63.5, 15)
 	_place(ch, 1, 61.5, 15)
 	await _frames(40)
-	_place(ch, 1, 66.5, 8)                           # người chơi 2 thả từ trên cao vào khe
+	_place(ch, 1, 66.5, 8)
 	await _frames(200)
 	await _shot("anchor_and_dangle")
 	Input.action_release("p1_use")
 
-	# --- toàn cảnh màn ---
-	ch.set_physics_process(false)                    # camera đứng yên để chụp toàn cảnh
+	ch.set_physics_process(false)
 	ch.camera.limit_left = -100000
 	ch.camera.limit_top = -100000
 	ch.camera.limit_right = 100000
@@ -99,7 +91,7 @@ func _level_shots() -> void:
 	ch.camera.global_position = ch.level.size / 2.0
 	await _frames(6)
 	await _shot("level_overview")
-	for half in 2:                                   # hai nửa màn, dễ nhìn hơn
+	for half in 2:
 		ch.camera.zoom = Vector2(0.62, 0.62)
 		ch.camera.global_position = Vector2(ch.level.size.x * (0.25 + 0.5 * half), ch.level.size.y / 2.0)
 		await _frames(6)
@@ -111,11 +103,10 @@ func _level_shots() -> void:
 	ch.queue_free()
 	await _frames(150)
 
-	# --- bảng kết quả (P1 hơn P2) ---
 	ch = await _start()
 	await _wait_running(ch)
 	await _frames(30)
-	_place(ch, 0, 121.0, 15)                         # hai người ở cạnh cờ đích
+	_place(ch, 0, 121.0, 15)
 	_place(ch, 1, 122.5, 15)
 	await _frames(40)
 	for i in 5:
@@ -133,14 +124,13 @@ func _level_shots() -> void:
 	await _frames(150)
 
 
-## Màn 2 / màn 3: toàn cảnh chia hai nửa (đọc được từng ô), toàn cảnh cả màn, và ảnh lúc chơi (HUD, dây, hạt) ở các chỗ `spots` = [[cột 1, hàng 1, cột 2, hàng 2], ...].
 func _new_level_shots(index: int, prefix: String, spots: Array) -> void:
 	var ch := await _start(index)
 	await _wait_running(ch)
 	await _frames(30)
-	for i in spots.size():                           # ảnh lúc chơi: hai người ở chỗ khó, vài hạt trên dây
+	for i in spots.size():
 		var s: Array = spots[i]
-		Input.action_press("p2_use")                 # người chơi 2 neo (dây căng cho đẹp ảnh)
+		Input.action_press("p2_use")
 		_place(ch, 0, s[0], s[1])
 		_place(ch, 1, s[2], s[3])
 		await _frames(40)
@@ -150,7 +140,7 @@ func _new_level_shots(index: int, prefix: String, spots: Array) -> void:
 		await _frames(60)
 		await _shot("%s_gameplay%d" % [prefix, i + 1])
 		Input.action_release("p2_use")
-	ch.set_physics_process(false)                    # camera đứng yên để chụp toàn cảnh
+	ch.set_physics_process(false)
 	ch.camera.limit_left = -100000
 	ch.camera.limit_top = -100000
 	ch.camera.limit_right = 100000
@@ -164,7 +154,7 @@ func _new_level_shots(index: int, prefix: String, spots: Array) -> void:
 	ch.camera.global_position = ch.level.size / 2.0
 	await _frames(6)
 	await _shot("%s_overview" % prefix)
-	for half in 2:                                   # hai nửa màn, mỗi nửa rộng 80 ô (mỗi ô 16 pixel trên ảnh)
+	for half in 2:
 		ch.camera.zoom = Vector2(0.5, 0.5)
 		ch.camera.global_position = Vector2(ch.level.size.x * (0.25 + 0.5 * half), ch.level.size.y / 2.0)
 		await _frames(6)
