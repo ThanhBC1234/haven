@@ -324,7 +324,7 @@ func _set_carrier(ball: Ball) -> void:
 	_bomb = BombMarker.new()
 	_bomb.fuse_left = fuse
 	_bomb.fuse_total = total
-	_bomb.position = Vector2(0, -(ball.radius + BOMB_OFFSET))
+	_bomb.position = BombMarker.offset_for(ball)
 	ball.add_child(_bomb)
 
 
@@ -399,6 +399,7 @@ func _burst(pos: Vector2, color: Color, amount: int, vmin: float, vmax: float, l
 
 class BombMarker extends Node2D:
 	const PX := 7.0
+	const SCREEN_PAD := 4.0
 	var fuse_left := 8.0
 	var fuse_total := 8.0
 	var lit := false
@@ -409,7 +410,28 @@ class BombMarker extends Node2D:
 		z_index = 20
 		_font = UiTheme.main_font()
 
+	static func offset_for(ball: Ball) -> Vector2:
+		var want := Vector2(0.0, -(ball.radius + BOMB_OFFSET))
+		var half := PixelArt.size_of(PixelArt.BOMB, PX) / 2.0
+		var view := ball.get_viewport()
+		if view == null:
+			return want
+		var inv := view.get_canvas_transform().affine_inverse()
+		var top_left: Vector2 = inv * Vector2.ZERO
+		var bottom_right: Vector2 = inv * view.get_visible_rect().size
+		var min_y := top_left.y + half.y + SCREEN_PAD - ball.global_position.y
+		if want.y >= min_y:
+			return want
+		var at := Vector2(0.0, min_y)
+		if min_y > -(ball.radius + half.y):
+			var side := 1.0 if ball.global_position.x < (top_left.x + bottom_right.x) / 2.0 else -1.0
+			at.x = side * (ball.radius + half.x + 2.0)
+		return at
+
 	func _process(delta: float) -> void:
+		var ball := get_parent() as Ball
+		if ball != null:
+			position = offset_for(ball)
 		var urgency := 1.0 - clampf(fuse_left / maxf(fuse_total, 0.01), 0.0, 1.0)
 		_phase += (2.0 + 14.0 * urgency * urgency) * delta
 		lit = fmod(_phase, 1.0) < 0.5
