@@ -8,6 +8,10 @@ func _ready() -> void:
 		if a.begins_with("--shots="):
 			dir = a.trim_prefix("--shots=")
 	Game.save_enabled = false
+	if OS.get_cmdline_user_args().has("--only-fixes"):
+		await _fix_shots()
+		get_tree().quit()
+		return
 	if OS.get_cmdline_user_args().has("--only-bot"):
 		await _bot_shots()
 		get_tree().quit()
@@ -173,6 +177,36 @@ func _shot(shot_name: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	if dir != "" and img:
 		img.save_png(dir.path_join(shot_name + ".png"))
+
+
+func _fix_shots() -> void:
+	var brawl := await _start(0)
+	brawl.events.enabled = false
+	brawl.items.enabled = false
+	await _wait_match(brawl)
+	await _frames(40)
+	var a := brawl.balls[0]
+	var hud := brawl.hud
+	var origin := brawl.camera.position - brawl.get_viewport_rect().size / 2.0
+	a.teleport(hud.panel_rects()["score1"].get_center() + origin)
+	await _frames(20)
+	await _shot("fix_hud_fade_score")
+	a.teleport(brawl.spawn_points[0])
+	hud.show_event_roulette(["LOW GRAVITY", "SWAP!", "HOT POTATO", "ICE FLOOR"], "HOT POTATO", 30.0, Color("#ff6a3d"))
+	brawl.balls[1].teleport(Vector2(640, 40) + origin)
+	await _frames(9)
+	await _shot("fix_hud_roulette_top_fade")
+	brawl.balls[1].teleport(brawl.spawn_points[1])
+	await _frames(40)
+	await _shot("fix_hud_roulette_top")
+	hud.hide_event()
+	Input.action_press("back")
+	await _frames(3)
+	Input.action_release("back")
+	await _frames(10)
+	await _shot("fix_esc_prompt")
+	brawl.queue_free()
+	await _frames(3)
 
 
 func _item_shots(index: int) -> void:

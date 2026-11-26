@@ -36,7 +36,11 @@ var piggyback_rider: Ball
 var piggyback_carrier: Ball
 var seconds_left := 0.0
 var duration := DEFAULT_SECONDS
+var start_penalty := 0
 var _queued := 0
+var _resume_rider := 0
+var _resume_left := 0.0
+var _resume_duration := DEFAULT_SECONDS
 var _elapsed := 0.0
 var _mount_from := Vector2.ZERO
 var _lift := 0.0
@@ -58,12 +62,14 @@ func is_queued() -> bool:
 func setup(chained_node: Chained) -> void:
 	chained = chained_node
 	_queued = Game.chained_piggyback
+	start_penalty = _queued
 	Game.chained_piggyback = 0
 	Game.chained_switching = false
 	process_physics_priority = -1
 	chained.level_started.connect(_on_level_started)
 	chained.level_finished.connect(_on_level_finished)
 	chained.players_died.connect(_on_players_died)
+	chained.players_respawned.connect(_on_players_respawned)
 
 
 func record_result(result: Vector2i) -> void:
@@ -125,6 +131,7 @@ func _end(hop: bool) -> void:
 
 
 func _on_level_started() -> void:
+	_resume_rider = 0
 	if _queued == 0:
 		return
 	var rider_index := _queued - 1
@@ -138,7 +145,27 @@ func _on_level_finished(_counts: Vector2i) -> void:
 
 
 func _on_players_died(_cause: String) -> void:
+	if piggyback_active and not _finishing and is_instance_valid(piggyback_rider) and seconds_left > 0.05:
+		_resume_rider = piggyback_rider.player_id
+		_resume_left = seconds_left
+		_resume_duration = duration
 	_end(false)
+	if _resume_rider != 0 and is_instance_valid(chained.hud):
+		chained.hud.set_piggyback_banner(true)
+
+
+func _on_players_respawned() -> void:
+	if _resume_rider == 0:
+		return
+	var rider_index := _resume_rider - 1
+	var left := _resume_left
+	_resume_rider = 0
+	_resume_left = 0.0
+	start_piggyback(chained.balls[rider_index], chained.balls[1 - rider_index], left)
+	if not piggyback_active and is_instance_valid(chained.hud):
+		chained.hud.set_piggyback_banner(false)
+	if piggyback_active:
+		duration = maxf(_resume_duration, left)
 
 
 func _exit_tree() -> void:
@@ -275,9 +302,13 @@ func _make_banner() -> void:
 	_banner = Banner.new()
 	_banner.pb = self
 	_layer.add_child(_banner)
+	if is_instance_valid(chained.hud):
+		chained.hud.set_piggyback_banner(true)
 
 
 func _free_banner() -> void:
+	if chained != null and is_instance_valid(chained.hud):
+		chained.hud.set_piggyback_banner(false)
 	if _layer != null:
 		_layer.queue_free()
 		_layer = null

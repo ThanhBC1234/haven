@@ -53,6 +53,7 @@ func _ready() -> void:
 	brawl.match_over.connect(_on_match_over)
 	brawl.point_scored.connect(_on_point_scored)
 	brawl.player_respawned.connect(_on_player_respawned)
+	brawl.double_ko.connect(_on_double_ko)
 	if brawl.events != null:
 		brawl.events.event_started.connect(_on_event_changed)
 		brawl.events.event_ended.connect(_on_event_changed)
@@ -89,6 +90,9 @@ func _tick_boxes() -> void:
 			boxes.erase(box)
 			continue
 		if _on_stall_spike(box.position):
+			_remove_box(box)
+			continue
+		if is_buried(box.position):
 			_remove_box(box)
 			continue
 		for ball in brawl.balls:
@@ -262,6 +266,11 @@ func _on_point_scored(_scorer: Ball, victim: Ball, _cause: String) -> void:
 	_clear_player(victim)
 
 
+func _on_double_ko(_cause: String) -> void:
+	for ball in brawl.balls:
+		_clear_player(ball)
+
+
 func _on_player_respawned(ball: Ball) -> void:
 	_clear_player(ball)
 
@@ -320,6 +329,8 @@ func is_valid_spot(pos: Vector2) -> bool:
 		var ch := level.char_at(r - 1, c + dc)
 		if ch == "^" or ch == "T":
 			return false
+	if is_buried(pos):
+		return false
 	return not _on_stall_spike(Vector2(pos.x, floor_y))
 
 
@@ -349,6 +360,10 @@ func _random_id() -> String:
 		if id != _last_id:
 			options.append(id)
 	return options[randi() % options.size()]
+
+
+func is_buried(pos: Vector2) -> bool:
+	return brawl.hazard_y() <= pos.y + BOX_LIFT
 
 
 func _on_stall_spike(pos: Vector2) -> bool:

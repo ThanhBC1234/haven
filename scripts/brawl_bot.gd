@@ -8,7 +8,7 @@ const CANDIDATE_CHARGES := [0.0, 0.12, 0.25, 0.38, 0.5, 0.62, 0.75, 0.88, 1.0]
 const EVALS_PER_FRAME := 4
 const MAX_SIM_STEPS := 140
 const WAIT_HORIZON := 0.9
-const LAND_LEAD := 0.06
+const LAND_LEAD := 0.0
 const SPIKE_H := 10.0
 const SPIKE_W := 26.0
 const SPIKE_PAD := 2.0
@@ -25,6 +25,14 @@ const FRICTION_CUT := 1.4
 const CAREFUL_SCALE := 0.3
 const RELAX_AFTER := 2.5
 const LAUNCH_CHECK_ERR := 0.05
+const CHECK_LEAD := 16
+const THIN_SKIN := -4.0
+const THIN_DIVERGE := 24.0
+const VETO_SECONDS := 1.5
+const ALIGN_FRAMES := 5
+const SETTLE_MAX := 40
+const REST_SPEED := 110.0
+const AIR_FIRE_FRAMES := 8
 const SAFETY_SKIN := 4.0
 const SKIN_Y := 3.0
 const SKIN := 2.0
@@ -50,6 +58,8 @@ var items_used := 0
 var last_jump := ""
 var _since_hop := 0.0
 var _extra_skin := 0.0
+var timing_reason := ""
+var timing_aborts := 0
 var aborts := 0
 var thoughts := 0
 var last_choice := ""
@@ -97,12 +107,23 @@ var _ch_ranked: Array = []
 var _ch_i := 0
 var _ch_checks := 0
 var _ch_amounts: Array = []
+var _thick_end := Vector2.ZERO
+var _ch_thin := false
 var _ch_k := 0
 var _ch_best: Dictionary = {}
 var _ch_strict := true
 var _ch_sigma := 0.0
+var _plan_charge := 0.0
+var _veto_dir := 0
+var _veto_charge := 0.0
+var _veto_until := -1.0
+var _plan_strict := true
+var _aligned := false
+var _lc_state := 0
+var _lc_lead := 0.0
 var _lc_dir := 0
 var _lc_amounts: Array = []
+var _lc_thin := false
 var _lc_k := 0
 var _lc_safe := true
 var _ctx := {}
@@ -198,6 +219,7 @@ func _stop_all() -> void:
 	_think_job = null
 	_ch_job = null
 	_lc_job = null
+	_lc_state = 0
 	_think_cd = 0.25
 
 
@@ -252,15 +274,27 @@ func _play(delta: float) -> void:
 			_launch_step()
 		"prep":
 			_delay_frames -= 1
+			if _delay_frames <= 0 and _plan_dir != 0 and not _aligned:
+				_aligned = true
+				var wait := _align_wait()
+				if wait < 0:
+					timing_aborts += 1
+					timing_reason = "no_align"
+					_cancel_jump()
+					return
+				_delay_frames = wait
+			if _plan_dir != 0 and not _early_check(maxi(_delay_frames, 0) + _hold_frames):
+				return
 			if _delay_frames <= 0:
 				phase = "charge"
 				_start_charge()
 		"charge":
 			_hold_frames -= 1
+			if not _early_check(maxi(_hold_frames, 0)):
+				return
 			if _hold_frames <= 0:
-				if ball.on_ground or _hold_frames < -6:
-					_jump_now()
-					return
+				_fire_charged()
+				return
 		"launch":
 			_launch_wait -= 1
 			if _launched or _launch_wait <= 0:
@@ -659,7 +693,7 @@ class EvalJob extends RefCounted:
 	var finished := false
 
 
-func _eval_begin(dir: int, charge: float, immediate := false, ctx := {}, skin := 0.0, isolate := false) -> EvalJob:
+func _eval_begin(dir: int, charge: float, immediate := false, ctx := {}, skin := 0.0, isolate := false, min_launch := 0.0) -> EvalJob:
 	var c: Dictionary = ctx if not ctx.is_empty() else _ctx
 	var me := SimBody.new()
 	me.pos = c["me_pos"]
@@ -674,7 +708,7 @@ func _eval_begin(dir: int, charge: float, immediate := false, ctx := {}, skin :=
 	var foe_on: bool = c["foe_on"]
 	var wait := charge < 0.0
 	var hold_s := 0.0 if (wait or dir == 0 or immediate) else charge * ball.charge_time
-	var launch_at := 0.0 if wait else maxf(hold_s + FRAME, float(c["t_contact"]) - LAND_LEAD)
+	var launch_at := 0.0 if wait else maxf(maxf(hold_s + FRAME, float(c["t_contact"]) - LAND_LEAD), min_launch)
 	var res := {"dead": false, "stomp_opp": -1.0, "stomp_me": -1.0, "bump": false, "min_gap": 9999.0, "box": false,
 		"trap": false, "spring": false, "edge": false, "bonk": false, "landed": false, "end": me.pos, "end_opp": op.pos, "t_end": 0.0, "delay": launch_at - hold_s}
 	var job := EvalJob.new()
@@ -958,6 +992,8 @@ func _pick_mode(foe_pos: Vector2) -> String:
 		for box in brawl.items.boxes:
 			if not is_instance_valid(box):
 				continue
+			if brawl.items.is_buried(box.position + Vector2(0.0, 60.0)):
+				continue
 			var d: float = box.position.distance_to(ball.global_position)
 			if d < best and box.position.distance_to(foe_pos) > 120.0:
 				best = d
@@ -1020,6 +1056,7 @@ func _choose_begin() -> void:
 	_ch_checks = 0
 	_ch_amounts = []
 	_ch_k = 0
+	_ch_thin = false
 	phase = "choose"
 
 
@@ -1030,7 +1067,7 @@ func _choose_step() -> void:
 			if r["charge"] < 0.0:
 				_ch_best = r
 				break
-			if r["res"]["dead"]:
+			if r["res"]["dead"] or (r["dir"] != 0 and _clock < _veto_until and r["dir"] == _veto_dir and absf(r["charge"] - _veto_charge) < 0.13):
 				_ch_i += 1
 				continue
 			if r["dir"] == 0:
@@ -1045,13 +1082,23 @@ func _choose_step() -> void:
 			_ch_amounts = [maxf(0.0, charge - err), charge, minf(1.0, charge + err)]
 			_ch_k = 0
 		if _ch_job == null:
-			_ch_job = _eval_begin(r["dir"], _ch_amounts[_ch_k], false, {}, SAFETY_SKIN)
+			_ch_job = _eval_begin(r["dir"], _ch_amounts[_ch_k], false, {}, THIN_SKIN if _ch_thin else SAFETY_SKIN)
 		if not _eval_run(_ch_job, _deadline):
 			return
 		var res := _ch_job.res
 		_ch_job = null
+		var unsafe: bool = res["dead"] or res["spring"] or (_ch_strict and res["edge"])
+		if _ch_thin and not unsafe:
+			unsafe = (res["end"] as Vector2).distance_to(_thick_end) > THIN_DIVERGE
+		if not unsafe and res["bonk"] and not _ch_thin:
+			_ch_thin = true
+			_thick_end = res["end"]
+			if _out_of_time():
+				return
+			continue
+		_ch_thin = false
 		_ch_k += 1
-		if res["dead"] or res["spring"] or (_ch_strict and res["edge"]):
+		if unsafe:
 			_ch_amounts = []
 			_ch_i += 1
 		elif _ch_k >= _ch_amounts.size():
@@ -1078,6 +1125,10 @@ func _choose_finish(best: Dictionary) -> void:
 	_plan_end = best["res"]["end"]
 	last_choice = "dir=%d charge=%.2f score=%d mode=%s" % [dir, amount, best["score"], mode]
 	_plan_dir = dir
+	_plan_charge = amount
+	_lc_state = 0
+	_aligned = false
+	_plan_strict = _ch_strict
 	_hold_frames = 0 if dir == 0 else maxi(1, roundi(amount * ball.charge_time * 60.0))
 	var res: Dictionary = best["res"]
 	_delay_frames = maxi(0, roundi(float(res["delay"]) * 60.0) - _think_frames)
@@ -1095,32 +1146,136 @@ func _start_charge() -> void:
 	_press(_key(_plan_dir))
 
 
-func _launch_begin() -> void:
+func _early_check(frames_left: int) -> bool:
+	if _lc_state != 0 and phase == "charge" and ball.charge_dir != 0 and ball.charge_dir != _lc_dir:
+		_lc_state = 0
+		_lc_job = null
+	if _lc_state == 0 and frames_left <= CHECK_LEAD:
+		_launch_begin(_plan_charge, float(maxi(frames_left, 0)) * DT)
+		_lc_state = 1
+	if _lc_state == 1 and _launch_check_run():
+		_lc_state = 2
+	if _lc_state == 2 and not _lc_safe:
+		_launch_finish(false)
+		return false
+	return true
+
+
+func _fire_charged() -> void:
+	var off_plan: bool = ball.charge_dir == 0 or ball.charge_dir != _lc_dir or absf(ball.charge - _plan_charge) > LAUNCH_CHECK_ERR
+	var too_high: bool = not ball.on_ground and _frames_to_ground(AIR_FIRE_FRAMES) > AIR_FIRE_FRAMES
+	if _lc_state != 2 or off_plan or too_high:
+		timing_aborts += 1
+		timing_reason = "check_late=%s off_plan=%s (dir %d/%d charge %.2f/%.2f) too_high=%s (to ground %d frames, vel %s, hold %d)" % [_lc_state != 2, off_plan, ball.charge_dir, _lc_dir, ball.charge, _plan_charge, too_high, _frames_to_ground(60), ball.linear_velocity.round(), _hold_frames]
+		_cancel_jump()
+		return
+	_launch_finish(true)
+
+
+func _align_wait() -> int:
+	var total := _hold_frames + SETTLE_MAX
+	var b := SimBody.new()
+	b.pos = ball.global_position
+	b.vel = ball.linear_velocity
+	b.rad = ball.radius
+	var g := _gravity * ball.gravity_scale
+	var contacts: Array[int] = []
+	var settle := 1 << 30
+	if ball.on_ground and absf(b.vel.y) < REST_SPEED:
+		settle = 0
+	else:
+		for f in range(1, total + 1):
+			var vy_in := b.vel.y + g * DT
+			if _advance(b, g) == HIT_LAND:
+				if vy_in < REST_SPEED:
+					settle = f
+					break
+				contacts.append(f)
+				b.vel = Vector2(0.0, -BOUNCE * vy_in)
+				b.air = true
+	for k in range(0, SETTLE_MAX + 1):
+		var fire := k + _hold_frames
+		if fire >= settle:
+			return k
+		for c in contacts:
+			if c >= fire:
+				if c - fire <= ALIGN_FRAMES:
+					return k
+				break
+	return -1
+
+
+func _frames_to_ground(limit: int) -> int:
+	if ball.on_ground:
+		return 0
+	var b := SimBody.new()
+	b.pos = ball.global_position
+	b.vel = ball.linear_velocity
+	b.rad = ball.radius
+	var g := _gravity * ball.gravity_scale
+	for i in limit:
+		if _advance(b, g) == HIT_LAND:
+			return i + 1
+	return limit + 1
+
+
+func _cancel_jump() -> void:
+	for key in [_act("left"), _act("right")]:
+		_release(key)
+	_lc_state = 0
+	_lc_job = null
+	phase = "idle"
+	_think_cd = 0.0
+
+
+func _launch_begin(planned := -1.0, lead := 0.0) -> void:
 	_snapshot()
-	_lc_dir = ball.charge_dir if _plan_dir != 0 else 0
-	var amount := ball.charge if _lc_dir != 0 else ball.straight_jump
+	if planned >= 0.0:
+		_lc_dir = ball.charge_dir if (phase == "charge" and ball.charge_dir != 0) else _plan_dir
+	else:
+		_lc_dir = ball.charge_dir if _plan_dir != 0 else 0
+	var amount := planned if planned >= 0.0 else (ball.charge if _lc_dir != 0 else ball.straight_jump)
+	if _lc_dir == 0:
+		amount = ball.straight_jump
 	_lc_amounts = []
 	for delta in [-LAUNCH_CHECK_ERR, 0.0, LAUNCH_CHECK_ERR]:
 		_lc_amounts.append(clampf(amount + delta, 0.0, 1.0))
+	_lc_lead = lead
+	_lc_thin = false
 	_lc_k = 0
 	_lc_safe = true
 	_lc_job = null
 
 
-func _launch_step() -> void:
+func _launch_check_run() -> bool:
 	while _lc_k < _lc_amounts.size() and _lc_safe:
 		if _lc_job == null:
-			_lc_job = _eval_begin(_lc_dir, _lc_amounts[_lc_k], true, {}, SAFETY_SKIN)
+			_lc_job = _eval_begin(_lc_dir, _lc_amounts[_lc_k], true, {}, THIN_SKIN if _lc_thin else SAFETY_SKIN, false, _lc_lead)
 		if not _eval_run(_lc_job, _deadline):
-			return
+			return false
 		var res := _lc_job.res
 		_lc_job = null
+		var unsafe: bool = res["dead"] or res["spring"] or (_plan_strict and res["bonk"] and res["edge"])
+		if _lc_thin and not unsafe:
+			unsafe = (res["end"] as Vector2).distance_to(_thick_end) > THIN_DIVERGE
+		if not unsafe and res["bonk"] and not _lc_thin:
+			_lc_thin = true
+			_thick_end = res["end"]
+			if _out_of_time():
+				return false
+			continue
+		_lc_thin = false
 		_lc_k += 1
-		if res["dead"] or res["spring"] or (res["bonk"] and res["edge"]):
+		if unsafe:
 			_lc_safe = false
 		elif _lc_k < _lc_amounts.size() and _out_of_time():
-			return
-	_launch_finish(_lc_safe)
+			return false
+	return true
+
+
+func _launch_step() -> void:
+	if _launch_check_run():
+		_launch_finish(_lc_safe)
 
 
 func _jump_now() -> void:
@@ -1130,12 +1285,13 @@ func _jump_now() -> void:
 
 
 func _launch_finish(safe: bool) -> void:
+	_lc_state = 0
 	if not safe:
-		for key in [_act("left"), _act("right")]:
-			_release(key)
+		_veto_dir = _plan_dir
+		_veto_charge = _plan_charge
+		_veto_until = _clock + VETO_SECONDS
 		aborts += 1
-		phase = "idle"
-		_think_cd = 0.0
+		_cancel_jump()
 		return
 	for key in [_act("left"), _act("right")]:
 		if _down.has(key):

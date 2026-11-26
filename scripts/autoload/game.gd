@@ -34,6 +34,7 @@ var level_index := 0
 var best_stars := {}
 var best_score := 0
 var total_stars := 0
+var endless_stars := 0
 var save_enabled := true
 var brawl_vs_bot := false
 var chained_index := 0
@@ -88,16 +89,39 @@ func next_level() -> bool:
 
 func record_stars(index: int, stars: int) -> void:
 	best_stars[index] = maxi(stars, best_stars.get(index, 0))
-	total_stars += stars
+	_recount_stars()
 	save_progress()
 
 
 func record_endless(score: int, stars: int) -> bool:
-	total_stars += stars
+	endless_stars += maxi(0, stars)
+	_recount_stars()
 	var new_best := score > best_score
 	best_score = maxi(best_score, score)
 	save_progress()
 	return new_best
+
+
+func story_stars() -> int:
+	var n := 0
+	for i in best_stars:
+		n += int(best_stars[i])
+	return n
+
+
+static func story_star_total() -> int:
+	var n := 0
+	for i in LevelData.LEVELS.size():
+		n += star_cap(i)
+	return n
+
+
+static func star_cap(index: int) -> int:
+	return String(LevelData.LEVELS[index]["map"]).count("*")
+
+
+func _recount_stars() -> void:
+	total_stars = story_stars() + endless_stars
 
 
 func go_to_menu() -> void:
@@ -112,14 +136,31 @@ func save_progress() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("progress", "best_score", best_score)
 	cfg.set_value("progress", "total_stars", total_stars)
+	cfg.set_value("progress", "endless_stars", endless_stars)
 	cfg.set_value("progress", "best_stars", best_stars)
 	cfg.save(SAVE_PATH)
 
 
-func load_progress() -> void:
+func load_progress(path := SAVE_PATH) -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(SAVE_PATH) != OK:
+	if cfg.load(path) != OK:
 		return
-	best_score = cfg.get_value("progress", "best_score", 0)
-	total_stars = cfg.get_value("progress", "total_stars", 0)
-	best_stars = cfg.get_value("progress", "best_stars", {})
+	var score = cfg.get_value("progress", "best_score", 0)
+	if typeof(score) == TYPE_INT and score >= 0:
+		best_score = score
+	var stars = cfg.get_value("progress", "best_stars", {})
+	best_stars = {}
+	if typeof(stars) == TYPE_DICTIONARY:
+		for k in stars:
+			var v = stars[k]
+			if typeof(k) == TYPE_INT and typeof(v) == TYPE_INT and k >= 0 and k < LevelData.LEVELS.size() and v >= 0:
+				best_stars[k] = mini(v, star_cap(k))
+	var endless = cfg.get_value("progress", "endless_stars", -1)
+	if typeof(endless) == TYPE_INT and endless >= 0:
+		endless_stars = endless
+	else:
+		var legacy = cfg.get_value("progress", "total_stars", 0)
+		endless_stars = 0
+		if typeof(legacy) == TYPE_INT and best_score > 0:
+			endless_stars = maxi(0, legacy - story_stars())
+	_recount_stars()

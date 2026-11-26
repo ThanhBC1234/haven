@@ -54,6 +54,7 @@ var cols := 0
 var size := Vector2.ZERO
 var start_position := Vector2.ZERO
 var star_total := 0
+var heart_gate := Callable()
 var _pressed := {}
 var _open := {}
 
@@ -70,6 +71,7 @@ static func channel_color(channel: String) -> Color:
 
 
 func build(map: String) -> void:
+	map = map.replace("\r", "")
 	for line in map.strip_edges(false, true).split("\n"):
 		if line.strip_edges() != "":
 			rows.append(line)
@@ -233,6 +235,10 @@ func collect_star(by: Ball = null) -> void:
 
 func collect_heart() -> void:
 	heart_collected.emit()
+
+
+func heart_wanted() -> bool:
+	return not heart_gate.is_valid() or bool(heart_gate.call())
 
 
 func start_boss(boss: Node) -> void:

@@ -14,6 +14,7 @@ const BEAD_DEADZONE := 6.0
 const BEAD_SPEED_PER_PX := 0.012
 const BEAD_MAX_SPEED := 1.2
 const STEAL_LOCK := 2.5
+const FREE_PULL_CAP := 400.0
 const ANCHOR_MASS_SCALE := 4.0
 const ANCHOR_FRICTION := 4.0
 const ANCHOR_BRAKE := 14.0
@@ -31,6 +32,8 @@ static var _bead_tex: ImageTexture = null
 @export var anchor_force_scale := 0.1
 @export var anchor_enabled := true
 var cut := false
+var free_limit := 0.0
+var pull_speed_cap := 0.0
 var beads: Array = []
 var ball_a: Ball = null
 var ball_b: Ball = null
@@ -46,9 +49,27 @@ var _time := 0.0
 
 
 class Bead extends RefCounted:
-	var t := 0.5
+	var _t := 0.5
+	var t: float:
+		get:
+			return _t
+		set(value):
+			_t = value
+			u = value
+	var u := 0.5
 	var lock := 0.0
 	var pop := 0.0
+	var pin := 0
+
+
+	func place(value: float) -> void:
+		_t = value
+
+
+	func side() -> int:
+		if absf(u - 0.5) < 0.001:
+			return 0
+		return 1 if u < 0.5 else 2
 
 
 func setup(a: Ball, b: Ball) -> void:
@@ -113,30 +134,50 @@ func _apply_force(delta: float) -> void:
 	var pb := _end(ball_b)
 	var offset := pb - pa
 	_length = offset.length()
-	if cut or ball_a.dead or ball_b.dead or _length < 1.0:
+	if ball_a.dead or ball_b.dead or _length < 1.0:
+		return
+	if cut:
+		_apply_free_limit(offset / _length, delta)
 		return
 	var stretch := _length - rest_length
 	if stretch <= 0.0:
 		return
+	var longest := maxf(max_length, rest_length)
 	var dir := offset / _length
 	var force := stiffness * stretch
-	if _length > max_length:
-		force += hard_stiffness * (_length - max_length)
+	if _length > longest:
+		force += hard_stiffness * (_length - longest)
 	var closing := (ball_b.linear_velocity - ball_a.linear_velocity).dot(dir)
 	if closing > 0.0:
 		force += damping * closing * minf(1.0, stretch / DAMP_RAMP)
-		if _length > max_length:
+		if _length > longest:
 			force += hard_damping * closing
 	_tension = force
 	_pull(0, dir, force, delta)
 	_pull(1, -dir, force, delta)
 
 
+func _apply_free_limit(dir: Vector2, delta: float) -> void:
+	if free_limit <= 0.0 or _length <= free_limit:
+		return
+	var closing := (ball_b.linear_velocity - ball_a.linear_velocity).dot(dir)
+	var force := stiffness * (_length - free_limit) + hard_damping * maxf(closing, 0.0)
+	var saved := pull_speed_cap
+	pull_speed_cap = FREE_PULL_CAP if saved <= 0.0 else minf(saved, FREE_PULL_CAP)
+	_pull(0, dir, force, delta)
+	_pull(1, -dir, force, delta)
+	pull_speed_cap = saved
+
+
 func _pull(i: int, dir: Vector2, force: float, delta: float) -> void:
 	var ball: Ball = ball_a if i == 0 else ball_b
 	var factor := anchor_force_scale if _anchored[i] else 1.0
 	var m: float = _saved_mass[i] if _anchored[i] else ball.mass
-	ball.knockback(dir * (force * factor * delta / maxf(m, 0.01)))
+	var impulse := force * factor * delta / maxf(m, 0.01)
+	if pull_speed_cap > 0.0:
+		var toward := ball.linear_velocity.dot(dir)
+		impulse = minf(impulse, maxf(pull_speed_cap - toward, 0.0))
+	ball.knockback(dir * impulse)
 
 
 func _update_anchors(delta: float) -> void:
@@ -200,11 +241,10 @@ func remove_bead(bead: Bead) -> void:
 func bead_counts() -> Vector2i:
 	var counts := Vector2i.ZERO
 	for bead in beads:
-		if absf(bead.t - 0.5) < 0.001:
-			continue
-		if bead.t < 0.5:
+		var side: int = bead.side()
+		if side == 1:
 			counts.x += 1
-		else:
+		elif side == 2:
 			counts.y += 1
 	return counts
 
@@ -215,21 +255,30 @@ func steal_bead(thief: Ball, victim: Ball) -> bool:
 	var victim_is_a := victim == ball_a
 	var pick: Bead = null
 	for bead in beads:
+		var on_victim_side: bool = bead.side() == (1 if victim_is_a else 2)
+		if not on_victim_side:
+			continue
 		if pick == null or (bead.t < pick.t if victim_is_a else bead.t > pick.t):
 			pick = bead
+	if pick == null:
+		return false
 	pick.t = (1.0 - BEAD_END) if victim_is_a else BEAD_END
+	pick.pin = 2 if victim_is_a else 1
 	pick.lock = STEAL_LOCK
 	pick.pop = 0.35
 	_separate()
 	return true
 
 
+func release_pins() -> void:
+	for bead in beads:
+		bead.pin = 0
+
+
 func drop_beads(player: int) -> int:
 	var side: Array = []
 	for bead in beads:
-		if player == 1 and bead.t < 0.5 - 0.001:
-			side.append(bead)
-		elif player == 2 and bead.t > 0.5 + 0.001:
+		if bead.side() == player:
 			side.append(bead)
 	side.sort_custom(func(x: Bead, y: Bead) -> bool: return x.t < y.t if player == 1 else x.t > y.t)
 	var count := ceili(side.size() / 2.0)
@@ -257,17 +306,17 @@ func _separate() -> void:
 			var gap: float = beads[i].t - beads[i - 1].t
 			if gap < s - 0.0001:
 				var push := (s - gap) * 0.5
-				beads[i - 1].t -= push
-				beads[i].t += push
+				beads[i - 1].place(beads[i - 1].t - push)
+				beads[i].place(beads[i].t + push)
 				moved = true
 		if not moved:
 			break
-	beads[0].t = maxf(beads[0].t, BEAD_END)
+	beads[0].place(maxf(beads[0].t, BEAD_END))
 	for i in range(1, n):
-		beads[i].t = maxf(beads[i].t, beads[i - 1].t + s)
-	beads[n - 1].t = minf(beads[n - 1].t, 1.0 - BEAD_END)
+		beads[i].place(maxf(beads[i].t, beads[i - 1].t + s))
+	beads[n - 1].place(minf(beads[n - 1].t, 1.0 - BEAD_END))
 	for i in range(n - 2, -1, -1):
-		beads[i].t = minf(beads[i].t, beads[i + 1].t - s)
+		beads[i].place(minf(beads[i].t, beads[i + 1].t - s))
 
 
 func _update_beads(delta: float) -> void:
@@ -276,6 +325,7 @@ func _update_beads(delta: float) -> void:
 		bead.pop = maxf(0.0, bead.pop - delta)
 	if beads.is_empty() or freeze_beads or cut or ball_a.dead or ball_b.dead:
 		return
+	_slide_pinned(delta)
 	var dy := ball_b.global_position.y - ball_a.global_position.y
 	if absf(dy) < BEAD_DEADZONE:
 		_separate()
@@ -288,14 +338,34 @@ func _update_beads(delta: float) -> void:
 		for i in range(n - 1, -1, -1):
 			var bead: Bead = beads[i]
 			var limit: float = (1.0 - BEAD_END) if i == n - 1 else beads[i + 1].t - s
-			if bead.lock <= 0.0:
-				bead.t = maxf(bead.t, minf(bead.t + speed * delta, limit))
+			if bead.lock <= 0.0 and bead.pin == 0:
+				bead.place(maxf(bead.t, minf(bead.t + speed * delta, limit)))
+				bead.u = minf(maxf(bead.u + speed * delta, bead.t), 1.0 - BEAD_END)
 	else:
 		for i in n:
 			var bead: Bead = beads[i]
 			var limit: float = BEAD_END if i == 0 else beads[i - 1].t + s
-			if bead.lock <= 0.0:
-				bead.t = minf(bead.t, maxf(bead.t + speed * delta, limit))
+			if bead.lock <= 0.0 and bead.pin == 0:
+				bead.place(minf(bead.t, maxf(bead.t + speed * delta, limit)))
+				bead.u = maxf(minf(bead.u + speed * delta, bead.t), BEAD_END)
+
+
+func _slide_pinned(delta: float) -> void:
+	var s := _spacing()
+	beads.sort_custom(func(x: Bead, y: Bead) -> bool: return x.t < y.t)
+	var n := beads.size()
+	for i in range(n - 1, -1, -1):
+		var bead: Bead = beads[i]
+		if bead.pin == 2:
+			var limit: float = (1.0 - BEAD_END) if i == n - 1 else beads[i + 1].t - s
+			bead.place(maxf(bead.t, minf(bead.t + BEAD_MAX_SPEED * delta, limit)))
+			bead.u = 1.0 - BEAD_END
+	for i in n:
+		var bead: Bead = beads[i]
+		if bead.pin == 1:
+			var limit: float = BEAD_END if i == 0 else beads[i - 1].t + s
+			bead.place(minf(bead.t, maxf(bead.t - BEAD_MAX_SPEED * delta, limit)))
+			bead.u = BEAD_END
 
 
 static func bead_texture() -> ImageTexture:

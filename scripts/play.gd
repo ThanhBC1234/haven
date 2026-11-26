@@ -4,6 +4,7 @@ const BALL_SCENE := preload("res://scenes/ball.tscn")
 const LIVES := 3
 const RESPAWN_DELAY := 0.8
 const FALL_MARGIN := 160.0
+const QUIT_CONFIRM_SECONDS := 2.0
 
 @onready var camera: Camera2D = $Camera
 @onready var hud: Hud = $HUD/Hud
@@ -14,6 +15,8 @@ var lives := LIVES
 var stars := 0
 var respawn_position := Vector2.ZERO
 var _busy := false
+var _done := false
+var _quit_armed := 0.0
 
 
 func _ready() -> void:
@@ -47,6 +50,7 @@ func _ready() -> void:
 	hud.watch_ball(ball)
 	hud.watch_level(level)
 	level.heart_collected.connect(_on_heart)
+	level.heart_gate = func() -> bool: return lives < LIVES
 
 	var bounds := StaticBody2D.new()
 	for wall_x in [TILE_MARGIN / 4.0, level.size.x - TILE_MARGIN / 4.0]:
@@ -61,7 +65,11 @@ func _ready() -> void:
 const TILE_MARGIN := 64.0
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	if _quit_armed > 0.0:
+		_quit_armed = maxf(0.0, _quit_armed - delta)
+		if _quit_armed <= 0.0:
+			hud.hide_quit_prompt()
 	if not ball.dead:
 		camera.global_position = ball.global_position + Vector2(ball.linear_velocity.x * 0.25, -40)
 		if ball.global_position.y > level.size.y + FALL_MARGIN:
@@ -69,7 +77,11 @@ func _physics_process(_delta: float) -> void:
 	if Input.is_action_just_pressed("restart") and not _busy:
 		_on_ball_hurt()
 	if Input.is_action_just_pressed("back"):
-		Game.go_to_menu()
+		if _done or _quit_armed > 0.0:
+			Game.go_to_menu()
+			return
+		_quit_armed = QUIT_CONFIRM_SECONDS
+		hud.show_quit_prompt(QUIT_CONFIRM_SECONDS)
 
 
 func _on_ball_hurt() -> void:
@@ -111,6 +123,7 @@ func _on_finished() -> void:
 	if _busy:
 		return
 	_busy = true
+	_done = true
 	ball.dead = true
 	Game.record_stars(Game.level_index, stars)
 	var has_next := Game.level_index + 1 < LevelData.LEVELS.size()

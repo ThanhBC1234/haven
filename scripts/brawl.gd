@@ -5,6 +5,7 @@ signal point_scored(scorer: Ball, victim: Ball, cause: String)
 signal match_started
 signal match_over(winner: Ball)
 signal player_respawned(ball: Ball)
+signal double_ko(cause: String)
 
 const BALL_SCENE := preload("res://scenes/ball.tscn")
 const WIN_SCORE := 5
@@ -22,6 +23,10 @@ const LEADER_SCALE := 1.25
 const CROWN_PX := 3.0
 const GOAL_DELAY := 0.9
 const GOAL_SECONDS := 2.2
+const DOUBLE_KO_TEXT := "DOUBLE KO! NO POINTS"
+const QUIT_CONFIRM_SECONDS := 2.0
+const SPAWN_CLEAR := 150.0
+const SPAWN_MIN_GAP := 40.0
 
 static var _last_arena := -1
 
@@ -63,6 +68,9 @@ var _stall_left: Array[int] = []
 var _stall_right: Array[int] = []
 var _last_taunt := ""
 var _crowns: Array = [null, null]
+var _died_frame: Array[int] = [-1, -1]
+var _quit_left := 0.0
+var _safe_spots: Array[Vector2] = []
 var _was_touching := false
 var _shove_wait := 0
 
@@ -167,13 +175,23 @@ func spawn_of(ball: Ball) -> Vector2:
 
 func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("back"):
-		Game.go_to_menu()
-		return
+		if _quit_left > 0.0:
+			Game.go_to_menu()
+			return
+		_quit_left = QUIT_CONFIRM_SECONDS
+		hud.show_quit_prompt(QUIT_CONFIRM_SECONDS)
+	_quit_left = maxf(0.0, _quit_left - delta)
+	hud.cover_rects = _hud_cover_rects()
 	if not match_running:
 		return
+	var fallen: Array[Ball] = []
 	for ball in balls:
 		if not ball.dead and not arena_rect.grow_individual(200.0, 200.0, 200.0, FALL_MARGIN).has_point(ball.global_position):
-			kill(ball, "pit")
+			fallen.append(ball)
+	if fallen.size() == 2:
+		double_kill("pit")
+	elif fallen.size() == 1:
+		kill(fallen[0], "pit")
 	_update_leader()
 	_shove_balls()
 	_update_stall(delta)
@@ -195,6 +213,28 @@ func _shove_balls() -> void:
 			b.knockback(dir * SHOVE_SPEED + Vector2(0, -SHOVE_LIFT))
 
 
+func _hud_cover_rects() -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	var origin := camera.position - get_viewport_rect().size / 2.0
+	for ball in balls:
+		if not ball.visible:
+			continue
+		var c := ball.global_position - origin
+		var r := ball.radius + 4.0
+		rects.append(Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0))
+		var carrier: bool = events != null and events.bomb_carrier == ball
+		if ball == leader:
+			var crown_size := PixelArt.size_of(PixelArt.CROWN, CROWN_PX)
+			var lift := CrownMarker.BOMB_LIFT if carrier else 0.0
+			var crown_c := c - Vector2(0.0, CrownMarker.HEAD_TOP * ball.size_factor + 11.0 + lift)
+			rects.append(Rect2(crown_c - crown_size / 2.0, crown_size))
+		if carrier:
+			var bomb_size := PixelArt.size_of(PixelArt.BOMB, BrawlEvents.BombMarker.PX)
+			var bomb_c := c - Vector2(0.0, ball.radius + BrawlEvents.BOMB_OFFSET)
+			rects.append(Rect2(bomb_c - bomb_size / 2.0, bomb_size))
+	return rects
+
+
 func _on_ball_hurt(ball: Ball) -> void:
 	kill(ball, "spikes")
 
@@ -208,6 +248,20 @@ func _on_stomped(victim: Ball, stomper: Ball) -> void:
 func kill(victim: Ball, cause: String) -> void:
 	if not match_running or victim == null or victim.dead:
 		return
+	var frame := Engine.get_physics_frames()
+	var vi := balls.find(victim)
+	if _died_frame[1 - vi] == frame:
+		scores[vi] -= 1
+		hud.set_score(balls[vi].player_id, scores[vi])
+		_died_frame[1 - vi] = -1
+		victim.dead = true
+		_reset_stall()
+		_update_leader()
+		double_ko.emit(cause)
+		hud.flash(DOUBLE_KO_TEXT, 1.0, UiTheme.ACCENT)
+		_death_sequence(victim, cause, true)
+		return
+	_died_frame[vi] = frame
 	var scorer := opponent_of(victim)
 	var si := balls.find(scorer)
 	victim.dead = true
@@ -224,6 +278,18 @@ func kill(victim: Ball, cause: String) -> void:
 	if over:
 		_end_match(scorer)
 	_death_sequence(victim, cause, not over)
+
+
+func double_kill(cause: String) -> void:
+	if not match_running or balls[0].dead or balls[1].dead:
+		return
+	for ball in balls:
+		ball.dead = true
+	_reset_stall()
+	double_ko.emit(cause)
+	hud.flash(DOUBLE_KO_TEXT, 1.0, UiTheme.ACCENT)
+	for ball in balls:
+		_death_sequence(ball, cause, true)
 
 
 func player_name(ball: Ball) -> String:
@@ -268,9 +334,47 @@ func _death_sequence(victim: Ball, cause: String, respawn: bool) -> void:
 	_respawn(victim)
 
 
+func respawn_spot(ball: Ball) -> Vector2:
+	var home := spawn_of(ball)
+	var foe := opponent_of(ball)
+	if foe.dead or not foe.visible:
+		return home
+	var foe_pos := foe.global_position
+	var min_dist := ball.radius + foe.radius + SPAWN_MIN_GAP
+	if home.distance_to(foe_pos) >= maxf(SPAWN_CLEAR, min_dist):
+		return home
+	if _safe_spots.is_empty():
+		_build_safe_spots()
+	var best := home
+	var best_dist := home.distance_to(foe_pos)
+	for spot in _safe_spots:
+		if sudden_death_active and spot.y + 16.0 >= _sd_y - 100.0:
+			continue
+		var d := spot.distance_to(foe_pos)
+		if d > best_dist:
+			best = spot
+			best_dist = d
+	return best
+
+
+func _build_safe_spots() -> void:
+	for r in range(2, level.rows.size()):
+		for c in range(1, level.cols - 1):
+			if level.char_at(r, c) != "#":
+				continue
+			if not level.char_at(r - 1, c) in ".OP" or level.char_at(r - 2, c) != ".":
+				continue
+			var clear := true
+			for dc in [-1, 0, 1]:
+				if level.char_at(r - 1, c + dc) in "^Tv":
+					clear = false
+			if clear:
+				_safe_spots.append(Vector2((c + 0.5) * Level.TILE, r * Level.TILE - 16.0))
+
+
 func _respawn(ball: Ball) -> void:
 	var base_radius := ball.radius / ball.size_factor
-	ball.teleport(spawn_of(ball) + Vector2(0.0, base_radius - ball.radius))
+	ball.teleport(respawn_spot(ball) + Vector2(0.0, base_radius - ball.radius))
 	ball.collision_layer = BALL_LAYER
 	ball.show()
 	ball.invuln = RESPAWN_INVULN
@@ -302,6 +406,8 @@ func _pop_effect(pos: Vector2, color: Color) -> void:
 
 
 func _leader_by_score() -> Ball:
+	if winner != null:
+		return winner
 	if not match_running or scores[0] == scores[1]:
 		return null
 	return balls[0] if scores[0] > scores[1] else balls[1]
@@ -343,7 +449,7 @@ class CrownMarker extends Node2D:
 
 	func _process(delta: float) -> void:
 		_time += delta
-		visible = not ball.dead
+		visible = not ball.dead or (brawl != null and brawl.winner == ball)
 		var f := ball.size_factor
 		var lift := 0.0
 		if brawl != null and brawl.events != null and brawl.events.bomb_carrier == ball:
@@ -462,17 +568,16 @@ func _rise_hazard(delta: float) -> void:
 	else:
 		_sd_y -= sudden_death_speed * delta
 	_place_hazard_row()
-	var victim: Ball = null
-	var deepest := 0.0
+	var hit: Array[Ball] = []
 	for ball in balls:
 		if ball.dead or ball.invuln > 0.0:
 			continue
-		var depth := ball.global_position.y + ball.radius - _sd_y
-		if depth >= 0.0 and (victim == null or depth > deepest + 0.5 or (absf(depth - deepest) <= 0.5 and randf() < 0.5)):
-			victim = ball
-			deepest = depth
-	if victim != null:
-		kill(victim, "spikes")
+		if ball.global_position.y + ball.radius - _sd_y >= 0.0:
+			hit.append(ball)
+	if hit.size() == 2:
+		double_kill("spikes")
+	elif hit.size() == 1:
+		kill(hit[0], "spikes")
 
 
 class HazardRow extends Node2D:

@@ -13,6 +13,7 @@ const RESPAWN_DELAY := 0.8
 const DIFFICULTY_STEPS := [[0, 1], [3, 2], [7, 3]]
 const BOSS_EVERY := 8
 const BOSS_POINTS := 500
+const QUIT_CONFIRM_SECONDS := 2.0
 
 @onready var camera: Camera2D = $Camera
 @onready var hud: Hud = $HUD/Hud
@@ -34,11 +35,15 @@ var boss_arenas_built := 0
 var _rng := RandomNumberGenerator.new()
 var _busy := false
 var _over := false
+var _recorded := false
+var _quit_armed := 0.0
+var _left_wall: StaticBody2D
 
 
 func _ready() -> void:
 	_rng.randomize()
 	_add_chunk(SegmentData.START, "Start")
+	_make_left_wall()
 	ball = BALL_SCENE.instantiate()
 	ball.position = chunks[0].start_position
 	ball.z_index = 5
@@ -71,10 +76,24 @@ func _add_chunk(map: String, seg_name: String) -> void:
 	lv.star_collected.connect(_on_star)
 	lv.heart_collected.connect(_on_heart)
 	lv.boss_defeated.connect(_on_boss_defeated)
+	lv.heart_gate = func() -> bool: return lives < LIVES
 	hud.watch_level(lv)
 	chunks.append(lv)
 	_end_x += lv.size.x
 	_goals.append(_end_x)
+
+
+func _make_left_wall() -> void:
+	_left_wall = StaticBody2D.new()
+	_left_wall.name = "LeftWall"
+	_left_wall.collision_layer = 1
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(32, 4000)
+	shape.shape = rect
+	_left_wall.add_child(shape)
+	_left_wall.position = Vector2(chunks[0].position.x - 16.0, -1000.0)
+	add_child(_left_wall)
 
 
 func _pick_segment() -> Dictionary:
@@ -100,9 +119,14 @@ func _fill_ahead() -> void:
 		_last_name = seg["name"]
 	while chunks.size() > 2 and chunks[0].position.x + chunks[0].size.x < ball.global_position.x - BEHIND:
 		chunks.pop_front().queue_free()
+		_left_wall.position.x = chunks[0].position.x - 16.0
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	if _quit_armed > 0.0:
+		_quit_armed = maxf(0.0, _quit_armed - delta)
+		if _quit_armed <= 0.0:
+			hud.hide_quit_prompt()
 	if _over:
 		if Input.is_action_just_pressed("back"):
 			Game.go_to_menu()
@@ -127,7 +151,17 @@ func _physics_process(_delta: float) -> void:
 	if Input.is_action_just_pressed("restart") and not _busy:
 		_on_ball_hurt()
 	if Input.is_action_just_pressed("back"):
-		Game.go_to_menu()
+		if _quit_armed > 0.0:
+			_record_run()
+			Game.go_to_menu()
+			return
+		_quit_armed = QUIT_CONFIRM_SECONDS
+		hud.show_quit_prompt(QUIT_CONFIRM_SECONDS)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_record_run()
 
 
 func _on_star() -> void:
@@ -176,5 +210,12 @@ func _respawn_point(x: float) -> Vector2:
 
 func _game_over() -> void:
 	_over = true
-	var new_best := Game.record_endless(int(score), stars)
-	hud.show_game_over(int(score), Game.best_score, new_best, stars, Game.total_stars)
+	var new_best := _record_run()
+	hud.show_game_over(int(score), Game.best_score, new_best, stars, Game.endless_stars)
+
+
+func _record_run() -> bool:
+	if _recorded:
+		return false
+	_recorded = true
+	return Game.record_endless(int(score), stars)

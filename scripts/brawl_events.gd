@@ -14,6 +14,8 @@ const EVENT_COLORS := {
 	"reversed_keys": Color("#ffb020"), "swap": Color("#7fd6e0"), "hot_potato": Color("#ff6a3d"),
 }
 const POTATO_TOUCH_GAP := 2.0
+const SWAP_RETRY_SECONDS := 0.25
+const SWAP_MAX_TRIES := 10
 const BOMB_OFFSET := 62.0
 
 var enabled := true
@@ -43,6 +45,7 @@ var _saved := {}
 var _ice: IceOverlay = null
 var _bomb: BombMarker = null
 var _pass_cd := 0.0
+var _swap_tries := 0
 var _swap_wait := 0
 var _swap_velocities: Array[Vector2] = []
 
@@ -56,6 +59,7 @@ func _ready() -> void:
 	brawl.match_over.connect(_on_match_over)
 	brawl.player_respawned.connect(_on_player_respawned)
 	brawl.point_scored.connect(_on_point_scored)
+	brawl.double_ko.connect(_on_double_ko)
 	_next_in = first_delay
 
 
@@ -81,7 +85,7 @@ func duration_of(id: String) -> float:
 func pick_event() -> String:
 	var options: Array[String] = []
 	for e in EVENT_IDS:
-		if e != last_event:
+		if e != last_event and (e != "swap" or _can_swap()):
 			options.append(e)
 	var id: String = options[randi() % options.size()]
 	last_event = id
@@ -93,6 +97,7 @@ func start_event(id: String) -> void:
 		return
 	stop_event()
 	_next_in = interval
+	_swap_tries = 0
 	_begin(id)
 
 
@@ -112,6 +117,7 @@ func stop_event() -> void:
 
 func _start_roulette(id: String) -> void:
 	_next_in = interval
+	_swap_tries = 0
 	if roulette_seconds <= 0.0:
 		_begin(id)
 		return
@@ -126,6 +132,14 @@ func _start_roulette(id: String) -> void:
 func _begin(id: String) -> void:
 	rolling_event = ""
 	_roll_left = 0.0
+	if id == "swap" and not _can_swap():
+		_swap_tries += 1
+		if _swap_tries <= SWAP_MAX_TRIES:
+			rolling_event = id
+			_roll_left = SWAP_RETRY_SECONDS
+			return
+		brawl.hud.hide_event()
+		id = pick_event()
 	last_event = id
 	if id == "swap":
 		event_started.emit(id)
@@ -173,6 +187,9 @@ func _tick_active(delta: float) -> void:
 		_tick_potato(delta)
 	if time_left <= 0.0 and active_event != "":
 		if active_event == "hot_potato":
+			if bomb_carrier != null and bomb_carrier.invuln > 0.0:
+				time_left = 0.0
+				return
 			_explode_potato()
 		else:
 			stop_event()
@@ -241,6 +258,11 @@ func _on_match_started() -> void:
 	_next_in = first_delay
 
 
+func _on_double_ko(_cause: String) -> void:
+	if active_event == "hot_potato":
+		stop_event()
+
+
 func _on_match_over(_winner: Ball) -> void:
 	stop_event()
 
@@ -252,6 +274,10 @@ func _on_point_scored(_scorer: Ball, victim: Ball, cause: String) -> void:
 
 func swap_players() -> bool:
 	return _do_swap()
+
+
+func _can_swap() -> bool:
+	return brawl != null and brawl.balls.size() == 2 and not brawl.balls[0].dead and not brawl.balls[1].dead
 
 
 func _do_swap() -> bool:
@@ -273,8 +299,12 @@ func _do_swap() -> bool:
 func _give_bomb() -> void:
 	var options: Array[Ball] = []
 	for ball in brawl.balls:
-		if not ball.dead:
+		if not ball.dead and ball.invuln <= 0.0:
 			options.append(ball)
+	if options.is_empty():
+		for ball in brawl.balls:
+			if not ball.dead:
+				options.append(ball)
 	if options.is_empty():
 		options.append_array(brawl.balls)
 	_set_carrier(options[randi() % options.size()])
@@ -303,7 +333,7 @@ func _tick_potato(delta: float) -> void:
 	if _bomb != null:
 		_bomb.fuse_left = maxf(0.0, time_left)
 	var other := brawl.opponent_of(bomb_carrier)
-	if _pass_cd > 0.0 or bomb_carrier.dead or other.dead:
+	if _pass_cd > 0.0 or bomb_carrier.dead or other.dead or other.invuln > 0.0:
 		return
 	var gap := bomb_carrier.global_position.distance_to(other.global_position) - bomb_carrier.radius - other.radius
 	if gap <= POTATO_TOUCH_GAP:

@@ -337,31 +337,29 @@ func _rope_event_checks() -> void:
 	_expect(normal_start > 400.0 and normal_tension > 20000.0 and normal_apart < 345.0, "normal rope: 13 tiles apart is far beyond the limit, the rope pulls hard and the players end up within 10 tiles (%.0f px, tension %.0f -> %.0f px apart)" % [normal_start, normal_tension, normal_apart])
 
 	await _place(ch, 55.5, 62.5)
-	ev.short_leash_seconds = 3.5
+	ev.short_leash_seconds = 5.0
 	ev.start_event("short_leash")
+	var start_apart := rope.current_length()
 	var prev_max := rope.max_length
 	var prev_rest := rope.rest_length
-	var worst_step := 0.0
 	var monotonic := true
-	var worst_move := 0.0
-	var pa := a.global_position
-	var pb := b.global_position
-	for f in 100:
+	var worst_step := 0.0
+	var worst_speed := 0.0
+	var cap_on := rope.pull_speed_cap == ChainedEvents.SHRINK_PULL_CAP
+	for f in 150:
 		await _frames(1)
-		worst_step = maxf(worst_step, prev_max - rope.max_length)
-		monotonic = monotonic and rope.max_length <= prev_max and rope.rest_length <= prev_rest
+		monotonic = monotonic and rope.max_length <= prev_max and rope.rest_length <= prev_rest and rope.max_length >= rope.rest_length
+		worst_step = maxf(worst_step, maxf(prev_max - rope.max_length, prev_rest - rope.rest_length))
 		prev_max = rope.max_length
 		prev_rest = rope.rest_length
-		worst_move = maxf(worst_move, maxf(a.global_position.distance_to(pa), b.global_position.distance_to(pb)))
-		pa = a.global_position
-		pb = b.global_position
-	_expect(rope.rest_length == 64.0 and rope.max_length == 96.0, "SHORT LEASH: rest / max become 2 / 3 tiles (%.0f / %.0f px)" % [rope.rest_length, rope.max_length])
-	_expect(monotonic and worst_step < 8.0 and worst_step > 3.0, "SHORT LEASH: the rope tightens smoothly, no snap (largest step %.1f px per frame)" % worst_step)
-	_expect(worst_move < 25.0 and ch.lives == Chained.LIVES, "SHORT LEASH: the players are tugged together, nobody teleports or dies (largest move %.1f px per frame)" % worst_move)
-	_expect(rope.current_length() < 110.0 and a.on_ground and b.on_ground, "SHORT LEASH: they end up about 3 tiles apart (%.0f px, from 224)" % rope.current_length())
+		worst_speed = maxf(worst_speed, maxf(a.linear_velocity.length(), b.linear_velocity.length()))
+	_expect(cap_on and monotonic and worst_step <= ChainedEvents.RECOVER_RATE / 60.0 + 0.01, "SHORT LEASH: rest / max shrink at a steady rate (largest step %.2f px per frame, limit %.2f), max never below rest, and the pull is capped while they shrink" % [worst_step, ChainedEvents.RECOVER_RATE / 60.0])
+	_expect(rope.rest_length == 64.0 and rope.max_length == 96.0 and rope.pull_speed_cap == 0.0, "SHORT LEASH: the rope reaches 2 / 3 tiles and the pull cap is released (%.0f / %.0f px, cap %.0f)" % [rope.rest_length, rope.max_length, rope.pull_speed_cap])
+	_expect(rope.current_length() < start_apart - 80.0 and rope.current_length() < 110.0, "SHORT LEASH: the players were pulled together although nobody moved (%.0f px apart -> %.0f)" % [start_apart, rope.current_length()])
+	_expect(worst_speed <= 450.0 and a.on_ground and b.on_ground and ch.lives == Chained.LIVES, "SHORT LEASH: the pull never yanks anybody (fastest %.0f px/s, limit 450), nobody dies" % worst_speed)
 	var hold_apart := 0.0
 	for f in 60:
-		b.knockback(Vector2(-30.0, 0.0))
+		b.knockback(Vector2(30.0, 0.0))
 		await _frames(1)
 		hold_apart = maxf(hold_apart, rope.current_length())
 	_expect(hold_apart < 96.0 + 40.0, "SHORT LEASH: the rope keeps them close (longest %.0f px, limit 96 + 40)" % hold_apart)
@@ -370,7 +368,7 @@ func _rope_event_checks() -> void:
 		await _frames(1)
 		ran += 1
 	await _frames(8)
-	_expect(ev.active_event == "" and rope.max_length > 96.0 and rope.max_length < 320.0, "SHORT LEASH: when it ends the rope glides back instead of snapping (max now %.0f)" % rope.max_length)
+	_expect(ev.active_event == "" and rope.max_length > 96.0 and rope.max_length < 320.0 and rope.max_length >= rope.rest_length, "SHORT LEASH: when it ends the rope glides back instead of snapping (max now %.0f)" % rope.max_length)
 	await _frames(60)
 	var diff := _snap_diff(base, _snap(ch))
 	_expect(diff == "", "SHORT LEASH: after the glide the rope numbers are exactly the originals (%s)" % diff)
@@ -394,6 +392,7 @@ func _rope_event_checks() -> void:
 	await _place(ch, 55.5, 56.5)
 	ev.start_event("bungee")
 	await _frames(50)
+	b.teleport(a.global_position + Vector2(40.0, 0.0))
 	ran = 0
 	prev = rope.max_length
 	worst_step = 0.0
@@ -583,27 +582,20 @@ func _freedom_checks() -> void:
 	await _frames(20)
 	var apart := rope.current_length()
 	_expect(rope.cut and apart > 440.0 and rope.tension() == 0.0, "FREEDOM: players can be farther apart than the rope length while it lasts (%.0f px apart, rope max %.0f)" % [apart, rope.max_length])
-	var prev_len := apart
-	var worst_close := 0.0
-	var reattach_frames := 0
-	var pulled_in := false
-	for f in 400:
+	var worst_speed2 := 0.0
+	var reattached := false
+	for f in 200:
 		await _frames(1)
-		if ev.active_event == "":
-			var len := rope.current_length()
-			worst_close = maxf(worst_close, prev_len - len)
-			prev_len = len
-			if not rope.cut:
-				reattach_frames += 1
-			if not rope.cut and len < 330.0:
-				pulled_in = true
-				break
-	_expect(pulled_in and not rope.cut, "FREEDOM: the rope reattaches and the players end up within the normal rope length (%.0f px apart)" % rope.current_length())
-	_expect(reattach_frames >= 15 and worst_close < 25.0, "FREEDOM: the far-apart players are pulled together smoothly over about a second (%d frames, fastest %.1f px per frame), not snapped" % [reattach_frames, worst_close])
+		worst_speed2 = maxf(worst_speed2, maxf(a.linear_velocity.length(), b.linear_velocity.length()))
+		if ev.active_event == "" and not rope.cut:
+			reattached = true
+	_expect(reattached and not rope.cut and not ev.reattach_pending, "FREEDOM: the rope reattaches after the event")
+	_expect(worst_speed2 <= 450.0 and rope.max_length >= rope.rest_length, "FREEDOM: reattaching far apart never yanks anybody (fastest %.0f px/s, limit 450), max stays >= rest (%.0f / %.0f)" % [worst_speed2, rope.rest_length, rope.max_length])
+	_expect(rope.current_length() < apart - 40.0 or (rope.rest_length < apart - 40.0 and rope.max_length < apart), "FREEDOM: the rope shrinks back on its own even though nobody walks (apart %.0f -> %.0f, rest / max %.0f / %.0f)" % [apart, rope.current_length(), rope.rest_length, rope.max_length])
 	_expect(died.is_empty() and ch.lives == Chained.LIVES, "FREEDOM: reattaching never kills anyone")
-	await _frames(90)
+	await _frames(240)
 	diff = _snap_diff(base, _snap(ch))
-	_expect(diff == "" and ev.active_event == "" and not ev.reattach_pending, "FREEDOM: after the glide the rope numbers are exactly the originals (%s)" % diff)
+	_expect(diff == "" and ev.active_event == "" and not ev.reattach_pending, "FREEDOM: without anyone walking the rope numbers end up exactly the originals (%s)" % diff)
 
 	ev.freedom_seconds = 0.2
 	a.teleport(_cpos(62.5, 15.0))
@@ -683,7 +675,7 @@ func _effect_on(ch: Chained, id: String) -> bool:
 		"one_brain":
 			return (ev.brain == 1 or ev.brain == 2) and a.action_prefix == "p%d_" % ev.brain and b.action_prefix == a.action_prefix and _markers_on(a).size() == 1
 		"short_leash":
-			return rope.rest_length == 64.0 and rope.max_length == 96.0
+			return rope.rest_length >= 64.0 and rope.rest_length < 160.0 + 0.5 and rope.max_length >= 96.0 and rope.max_length < 320.0 and rope.max_length >= rope.rest_length
 		"bungee":
 			return rope.rest_length == 192.0 and rope.max_length == 576.0 and rope.stiffness == 5.0 and rope.damping == 1.5
 		"giant_tiny":
@@ -762,9 +754,12 @@ func _schedule_checks() -> void:
 	var saw_active := false
 	var active_text_ok := true
 	var stale_banner := false
+	var over_message := false
 	for f in 860:
 		await _frames(1)
 		clock[0] += 1
+		if ev.rolling_event != "" and ch.hud.message_active():
+			over_message = true
 		if ev.rolling_event != "" and ch.hud.event_state == "roulette":
 			saw_roll = true
 		if ev.active_event != "" and ch.hud.event_state == "active":
@@ -774,7 +769,7 @@ func _schedule_checks() -> void:
 			stale_banner = true
 	_expect(starts.size() >= 4 and absi(starts.size() - ends.size()) <= 1, "schedule: events fire by themselves (%d started in 14 s, %d ended)" % [starts.size(), ends.size()])
 	var first_at: float = starts[0][1] / 60.0
-	_expect(absf(first_at - 1.5) < 0.2, "schedule: the first event starts first_delay + roulette after the level starts (%.2f s, expected 1.5)" % first_at)
+	_expect(first_at > 1.3 and first_at < 5.0 and not over_message, "schedule: the first event never starts before first_delay + roulette (1.5 s) and waits for the opening messages (GO!, level-1 goal line) to fade: %.2f s, roulette over a message: %s" % [first_at, str(over_message)])
 	var gaps_ok := true
 	var no_repeat := true
 	for i in range(1, starts.size()):

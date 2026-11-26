@@ -8,13 +8,15 @@ const PLAYER_COLORS := [Color("#e8455a"), Color("#4da3ff")]
 const BOX_SIZE := Vector2(236, 76)
 const MARGIN := 16.0
 const CROWN_PX := 3.0
-const EVENT_Y := 190.0
-const EVENT_SIZE_ROLL := Vector2(520, 112)
+const EVENT_SIZE_ROLL := Vector2(560, 76)
 const EVENT_SIZE_ACTIVE := Vector2(560, 68)
 const EVENT_ACTIVE_Y := 12.0
 const ROULETTE_TICKS := 18
 const SLOT_SIZE := Vector2(88, 76)
 const SLOT_GAP := 6.0
+const FADE_ALPHA := 0.3
+const FADE_SPEED := 8.0
+const QUIT_PROMPT_COLOR := Color("#ffd23a")
 const PANEL_KEY_DELAY := 0.6
 
 var win_score := 5
@@ -26,6 +28,10 @@ var panel_keys_ready := false
 var message_label: Label
 var item_ids := ["", ""]
 var _item_ammo := [0, 0]
+var cover_rects: Array[Rect2] = []
+var quit_prompt_label: Label
+var _panel_alpha := {}
+var _quit_tween: Tween
 var _scores := [0, 0]
 var _frame: StyleBoxTexture
 var _flash_tween: Tween
@@ -45,7 +51,7 @@ func setup(target_score: int, with_bot := false) -> void:
 	vs_bot = with_bot
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_frame = UiTheme.frame(UiTheme.FRAME_NORMAL, 0, 0)
-	set_process(false)
+	set_process(true)
 
 	message_label = Label.new()
 	message_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -57,6 +63,16 @@ func setup(target_score: int, with_bot := false) -> void:
 	message_label.add_theme_constant_override("outline_size", 10)
 	message_label.modulate.a = 0.0
 	add_child(message_label)
+
+	quit_prompt_label = Label.new()
+	quit_prompt_label.text = "PRESS ESC AGAIN TO QUIT"
+	quit_prompt_label.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
+	quit_prompt_label.add_theme_color_override("font_color", QUIT_PROMPT_COLOR)
+	quit_prompt_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	quit_prompt_label.add_theme_constant_override("outline_size", 8)
+	quit_prompt_label.visible = false
+	add_child(quit_prompt_label)
+	quit_prompt_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 52)
 
 	if vs_bot:
 		_add_hint("YOU: A / D or ARROWS to aim, W / SPACE / UP to jump, S / DOWN: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
@@ -106,6 +122,17 @@ func flash(text: String, seconds := 0.9, color := UiTheme.ACCENT) -> void:
 	_flash_tween.tween_property(message_label, "modulate:a", 0.0, 0.5)
 
 
+func show_quit_prompt(seconds := 2.0) -> void:
+	if quit_prompt_label == null:
+		return
+	quit_prompt_label.visible = true
+	if _quit_tween:
+		_quit_tween.kill()
+	_quit_tween = create_tween()
+	_quit_tween.tween_interval(seconds)
+	_quit_tween.tween_callback(func() -> void: quit_prompt_label.visible = false)
+
+
 func show_event_roulette(names: Array, chosen: String, seconds := 2.0, color := UiTheme.ACCENT) -> void:
 	if names.is_empty():
 		return
@@ -121,7 +148,6 @@ func show_event_roulette(names: Array, chosen: String, seconds := 2.0, color := 
 	_event_color = color
 	event_state = "roulette"
 	event_text = _roulette_ticks[0][1]
-	set_process(true)
 	queue_redraw()
 
 
@@ -132,7 +158,6 @@ func show_event(event_name: String, seconds: float, color := UiTheme.ACCENT) -> 
 	_event_seconds = maxf(seconds, 0.01)
 	_event_time = 0.0
 	event_fraction = 1.0
-	set_process(true)
 	queue_redraw()
 
 
@@ -141,22 +166,58 @@ func hide_event() -> void:
 	event_text = ""
 	event_fraction = 0.0
 	_roulette_ticks.clear()
-	set_process(false)
 	queue_redraw()
 
 
 func _process(delta: float) -> void:
-	if event_state == "":
-		set_process(false)
-		return
-	_event_time += delta
+	var changed := _update_fade(delta)
+	if event_state != "":
+		_event_time += delta
+		if event_state == "roulette":
+			for tick in _roulette_ticks:
+				if tick[0] <= _event_time:
+					event_text = tick[1]
+		else:
+			event_fraction = clampf(1.0 - _event_time / _event_seconds, 0.0, 1.0)
+		changed = true
+	if changed:
+		queue_redraw()
+
+
+func panel_rects() -> Dictionary:
+	var mid := size.x / 2.0
+	var rects := {}
+	for i in 2:
+		var box := _score_box(i)
+		rects["score%d" % (i + 1)] = box
+		rects["item%d" % (i + 1)] = _slot_rect(i, box)
 	if event_state == "roulette":
-		for tick in _roulette_ticks:
-			if tick[0] <= _event_time:
-				event_text = tick[1]
+		rects["event"] = Rect2(Vector2(mid - EVENT_SIZE_ROLL.x / 2.0, EVENT_ACTIVE_Y), EVENT_SIZE_ROLL)
+	elif event_state == "active":
+		rects["event"] = Rect2(Vector2(mid - EVENT_SIZE_ACTIVE.x / 2.0, EVENT_ACTIVE_Y), EVENT_SIZE_ACTIVE)
 	else:
-		event_fraction = clampf(1.0 - _event_time / _event_seconds, 0.0, 1.0)
-	queue_redraw()
+		rects["event"] = Rect2(Vector2(mid - 100.0, 14.0), Vector2(200.0, 64.0))
+	return rects
+
+
+func panel_alpha(panel_name: String) -> float:
+	return _panel_alpha.get(panel_name, 1.0)
+
+
+func _update_fade(delta: float) -> bool:
+	var changed := false
+	var rects := panel_rects()
+	for key in rects:
+		var want := 1.0
+		for cover in cover_rects:
+			if (rects[key] as Rect2).intersects(cover):
+				want = FADE_ALPHA
+				break
+		var now: float = _panel_alpha.get(key, 1.0)
+		if not is_equal_approx(now, want):
+			_panel_alpha[key] = move_toward(now, want, FADE_SPEED * delta)
+			changed = true
+	return changed
 
 
 func show_win(winner_id: int, final_scores: Array) -> void:
@@ -219,61 +280,82 @@ func _draw() -> void:
 		return
 	var font := get_theme_default_font()
 	for i in 2:
-		var x := MARGIN if i == 0 else size.x - MARGIN - BOX_SIZE.x
-		var box := Rect2(Vector2(x, 12), BOX_SIZE)
+		var box := _score_box(i)
+		var a := panel_alpha("score%d" % (i + 1))
+		_frame.modulate_color = Color(1, 1, 1, a)
 		draw_style_box(_frame, box)
 		var col: Color = PLAYER_COLORS[i]
+		col.a = a
 		var label := "BOT" if vs_bot and i == 1 else "P%d" % (i + 1)
 		draw_string(font, box.position + Vector2(20 if label == "BOT" else 34, 50), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_MEDIUM, col)
 		draw_string(font, box.position + Vector2(112, 56), str(_scores[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_LARGE, col.lightened(0.2))
-		draw_string(font, box.position + Vector2(160, 56), "/ %d" % win_score, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_SMALL, UiTheme.DIM)
+		draw_string(font, box.position + Vector2(160, 56), "/ %d" % win_score, HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_SMALL, _fade(UiTheme.DIM, a))
 		_draw_item_slot(font, i, box)
 	var mid := size.x / 2.0
-	if event_state != "active":
-		PixelArt.draw_centered(self, PixelArt.CROWN, Vector2(mid, 34), CROWN_PX)
-		draw_string(font, Vector2(mid - 100, 70), "FIRST TO %d WINS" % win_score, HORIZONTAL_ALIGNMENT_CENTER, 200, UiTheme.FONT_SMALL, UiTheme.TEXT)
-	if event_state != "":
-		_draw_event_banner(font, mid)
+	var ea := panel_alpha("event")
+	if event_state == "":
+		PixelArt.draw_centered(self, PixelArt.CROWN, Vector2(mid, 34), CROWN_PX, Color(1, 1, 1, ea))
+		draw_string(font, Vector2(mid - 100, 70), "FIRST TO %d WINS" % win_score, HORIZONTAL_ALIGNMENT_CENTER, 200, UiTheme.FONT_SMALL, _fade(UiTheme.TEXT, ea))
+	else:
+		_draw_event_banner(font, mid, ea)
+	_frame.modulate_color = Color.WHITE
+
+
+func _score_box(i: int) -> Rect2:
+	var x := MARGIN if i == 0 else size.x - MARGIN - BOX_SIZE.x
+	return Rect2(Vector2(x, 12), BOX_SIZE)
+
+
+func _slot_rect(i: int, score_box: Rect2) -> Rect2:
+	var x := score_box.end.x + SLOT_GAP if i == 0 else score_box.position.x - SLOT_GAP - SLOT_SIZE.x
+	return Rect2(Vector2(x, score_box.position.y), SLOT_SIZE)
+
+
+func _fade(c: Color, a: float) -> Color:
+	return Color(c.r, c.g, c.b, c.a * a)
 
 
 func _draw_item_slot(font: Font, i: int, score_box: Rect2) -> void:
-	var x := score_box.end.x + SLOT_GAP if i == 0 else score_box.position.x - SLOT_GAP - SLOT_SIZE.x
-	var slot := Rect2(Vector2(x, score_box.position.y), SLOT_SIZE)
+	var slot := _slot_rect(i, score_box)
+	var a := panel_alpha("item%d" % (i + 1))
+	_frame.modulate_color = Color(1, 1, 1, a)
 	draw_style_box(_frame, slot)
 	var id: String = item_ids[i]
 	var col: Color = PLAYER_COLORS[i]
 	if id == "":
-		draw_string(font, Vector2(slot.position.x, slot.position.y + 46), "ITEM", HORIZONTAL_ALIGNMENT_CENTER, slot.size.x, UiTheme.FONT_SMALL, UiTheme.DIM)
+		draw_string(font, Vector2(slot.position.x, slot.position.y + 46), "ITEM", HORIZONTAL_ALIGNMENT_CENTER, slot.size.x, UiTheme.FONT_SMALL, _fade(UiTheme.DIM, a))
 		return
 	var pattern: Array = BrawlItems.ITEM_ICONS[id]
 	var px := floorf(minf(60.0 / String(pattern[0]).length(), 34.0 / pattern.size()))
-	PixelArt.draw_centered(self, pattern, slot.position + Vector2(slot.size.x / 2.0, 30.0), px)
+	PixelArt.draw_centered(self, pattern, slot.position + Vector2(slot.size.x / 2.0, 30.0), px, Color(1, 1, 1, a))
 	var label: String = BrawlItems.ITEM_NAMES[id]
 	if id == "gun":
 		label += " x%d" % _item_ammo[i]
-	draw_string(font, Vector2(slot.position.x, slot.position.y + 62), label, HORIZONTAL_ALIGNMENT_CENTER, slot.size.x, UiTheme.FONT_SMALL, col.lightened(0.35))
+	draw_string(font, Vector2(slot.position.x, slot.position.y + 62), label, HORIZONTAL_ALIGNMENT_CENTER, slot.size.x, UiTheme.FONT_SMALL, _fade(col.lightened(0.35), a))
 
 
-func _draw_event_banner(font: Font, mid: float) -> void:
+func _draw_event_banner(font: Font, mid: float, ea: float) -> void:
+	_frame.modulate_color = Color(1, 1, 1, ea)
+	var outline := Color(0, 0, 0, ea)
 	if event_state == "roulette":
-		var box := Rect2(Vector2(mid - EVENT_SIZE_ROLL.x / 2.0, EVENT_Y), EVENT_SIZE_ROLL)
+		var box := Rect2(Vector2(mid - EVENT_SIZE_ROLL.x / 2.0, EVENT_ACTIVE_Y), EVENT_SIZE_ROLL)
 		draw_style_box(_frame, box)
-		draw_string(font, Vector2(box.position.x, box.position.y + 40), "RANDOM EVENT", HORIZONTAL_ALIGNMENT_CENTER, box.size.x, UiTheme.FONT_SMALL, UiTheme.DIM)
+		draw_string(font, Vector2(box.position.x, box.position.y + 25), "RANDOM EVENT", HORIZONTAL_ALIGNMENT_CENTER, box.size.x, UiTheme.FONT_SMALL, _fade(UiTheme.DIM, ea))
 		var landed := _event_time >= _roulette_total
 		var col := UiTheme.TEXT
 		if landed:
 			col = _event_color if int(_event_time * 8.0) % 2 == 0 else Color.WHITE
-		draw_string_outline(font, Vector2(box.position.x, box.position.y + 90), event_text, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, UiTheme.FONT_LARGE, 8, Color.BLACK)
-		draw_string(font, Vector2(box.position.x, box.position.y + 90), event_text, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, UiTheme.FONT_LARGE, col)
-		var arrow := UiTheme.ACCENT if landed else UiTheme.DIM
+		draw_string_outline(font, Vector2(box.position.x, box.position.y + 64), event_text, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, UiTheme.FONT_LARGE, 8, outline)
+		draw_string(font, Vector2(box.position.x, box.position.y + 64), event_text, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, UiTheme.FONT_LARGE, _fade(col, ea))
+		var arrow := _fade(UiTheme.ACCENT if landed else UiTheme.DIM, ea)
 		var cy := box.position.y + box.size.y / 2.0 + 8.0
 		draw_colored_polygon(PackedVector2Array([Vector2(box.position.x + 40, cy - 12), Vector2(box.position.x + 40, cy + 12), Vector2(box.position.x + 58, cy)]), arrow)
 		draw_colored_polygon(PackedVector2Array([Vector2(box.end.x - 40, cy - 12), Vector2(box.end.x - 40, cy + 12), Vector2(box.end.x - 58, cy)]), arrow)
 		return
 	var panel := Rect2(Vector2(mid - EVENT_SIZE_ACTIVE.x / 2.0, EVENT_ACTIVE_Y), EVENT_SIZE_ACTIVE)
 	draw_style_box(_frame, panel)
-	draw_string_outline(font, Vector2(panel.position.x, panel.position.y + 38), event_text, HORIZONTAL_ALIGNMENT_CENTER, panel.size.x, UiTheme.FONT_MEDIUM, 6, Color.BLACK)
-	draw_string(font, Vector2(panel.position.x, panel.position.y + 38), event_text, HORIZONTAL_ALIGNMENT_CENTER, panel.size.x, UiTheme.FONT_MEDIUM, _event_color)
+	draw_string_outline(font, Vector2(panel.position.x, panel.position.y + 38), event_text, HORIZONTAL_ALIGNMENT_CENTER, panel.size.x, UiTheme.FONT_MEDIUM, 6, outline)
+	draw_string(font, Vector2(panel.position.x, panel.position.y + 38), event_text, HORIZONTAL_ALIGNMENT_CENTER, panel.size.x, UiTheme.FONT_MEDIUM, _fade(_event_color, ea))
 	var bar := Rect2(Vector2(panel.position.x + 60, panel.position.y + 46), Vector2(panel.size.x - 120, 8))
-	draw_rect(bar.grow(2), Color("#05080c"))
-	draw_rect(Rect2(bar.position, Vector2(bar.size.x * event_fraction, bar.size.y)), _event_color if event_fraction > 0.25 or int(_event_time * 6.0) % 2 == 0 else Color.WHITE)
+	draw_rect(bar.grow(2), Color(0.02, 0.03, 0.05, ea))
+	draw_rect(Rect2(bar.position, Vector2(bar.size.x * event_fraction, bar.size.y)), _fade(_event_color if event_fraction > 0.25 or int(_event_time * 6.0) % 2 == 0 else Color.WHITE, ea))

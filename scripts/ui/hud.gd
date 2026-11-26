@@ -24,6 +24,13 @@ var _boss_max := 0
 var _boost := 0.0
 var _boost_full := 10.0
 var _flash_tween: Tween
+var _hint: Label
+var quit_label: Label
+var _quit_tween: Tween
+var _ended := false
+var _queue: Array = []
+var _showing := false
+var _tip_shown := false
 
 const HEART_TEX := preload("res://assets/items/heart.png")
 const SHIELD_TEX := preload("res://assets/items/shield.png")
@@ -32,6 +39,11 @@ const BOOST_TEX := preload("res://assets/items/jump_boost.png")
 const HEART := ["0110110", "1111111", "1111111", "1111111", "0111110", "0011100", "0001000"]
 const STAR := ["0001000", "0011100", "1111111", "0111110", "0011100", "0110110", "0100010"]
 const ICON_PX := 4.0
+const PANEL_INPUT_DELAY := 0.7
+const ENDLESS_BOSS_BAR_Y := 176.0
+const MAX_QUEUED := 3
+const CONTROLS_TEXT := "HOLD A / D TO CHARGE, PRESS SPACE TO JUMP"
+const CONTROLS_SECONDS := 4.0
 
 
 func setup(level_name: String, lives: int, star_total: int) -> void:
@@ -71,19 +83,55 @@ func setup(level_name: String, lives: int, star_total: int) -> void:
 	_message.add_theme_constant_override("outline_size", 8)
 	add_child(_message)
 
-	var hint := Label.new()
-	hint.text = "R: back to checkpoint (-1 life)   Esc: menu"
-	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	hint.position -= Vector2(420, 38)
-	hint.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
-	hint.add_theme_color_override("font_color", UiTheme.DIM)
-	add_child(hint)
+	_hint = Label.new()
+	_hint.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
+	_hint.add_theme_color_override("font_color", UiTheme.DIM)
+	add_child(_hint)
+	set_hint("R: back to checkpoint (-1 life)   Esc twice: menu")
+	if Game.level_index == 0:
+		_show_controls_tip()
+
+	quit_label = Label.new()
+	quit_label.text = "PRESS ESC AGAIN TO QUIT"
+	quit_label.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
+	quit_label.add_theme_color_override("font_color", Color("#ffb020"))
+	quit_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	quit_label.add_theme_constant_override("outline_size", 8)
+	quit_label.visible = false
+	add_child(quit_label)
+	quit_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 56)
 	queue_redraw()
+
+
+func set_hint(text: String) -> void:
+	_hint.text = text
+	_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 16)
+	_hint.position.y -= 22
+
+
+func show_quit_prompt(seconds := 2.0) -> void:
+	if quit_label == null:
+		return
+	quit_label.visible = true
+	if _quit_tween:
+		_quit_tween.kill()
+	_quit_tween = create_tween()
+	_quit_tween.tween_interval(seconds)
+	_quit_tween.tween_callback(hide_quit_prompt)
+
+
+func hide_quit_prompt() -> void:
+	if _quit_tween:
+		_quit_tween.kill()
+	if quit_label != null:
+		quit_label.visible = false
 
 
 func setup_endless(lives: int) -> void:
 	setup("Endless Run", lives, 0)
 	_endless = true
+	_show_controls_tip()
+	set_hint("R: back to segment start (-1 life)   Esc twice: end run")
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -109,6 +157,34 @@ func set_score(score: int, mult: int) -> void:
 
 
 func flash(text: String, seconds := 0.9) -> void:
+	if _ended:
+		return
+	if _showing:
+		if _queue.size() < MAX_QUEUED:
+			_queue.append([text, seconds])
+		return
+	_show_flash(text, seconds)
+
+
+func _show_controls_tip() -> void:
+	if _tip_shown:
+		return
+	_tip_shown = true
+	flash(CONTROLS_TEXT, CONTROLS_SECONDS)
+
+
+static func guard_panel_button(b: Button) -> void:
+	b.gui_input.connect(func(ev: InputEvent) -> void:
+		var key := ev as InputEventKey
+		if key == null or not key.is_action("ui_accept"):
+			return
+		if key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER or key.physical_keycode == KEY_ENTER or key.physical_keycode == KEY_KP_ENTER:
+			return
+		b.accept_event())
+
+
+func _show_flash(text: String, seconds: float) -> void:
+	_showing = true
 	_message.text = text
 	_message.add_theme_color_override("font_color", UiTheme.ACCENT)
 	_message.modulate.a = 1.0
@@ -117,10 +193,18 @@ func flash(text: String, seconds := 0.9) -> void:
 	_flash_tween = create_tween()
 	_flash_tween.tween_interval(seconds)
 	_flash_tween.tween_property(_message, "modulate:a", 0.0, 0.5)
+	_flash_tween.tween_callback(_next_flash)
+
+
+func _next_flash() -> void:
+	_showing = false
+	if not _queue.is_empty():
+		var nxt: Array = _queue.pop_front()
+		_show_flash(nxt[0], nxt[1])
 
 
 func show_game_over(score: int, best: int, new_best: bool, stars: int, total_stars: int) -> void:
-	_message.text = ""
+	_begin_end_panel()
 	_panel = PanelContainer.new()
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -133,7 +217,7 @@ func show_game_over(score: int, best: int, new_best: bool, stars: int, total_sta
 		["GAME OVER", UiTheme.FONT_LARGE, UiTheme.ACCENT],
 		["Score  %d" % score, UiTheme.FONT_MEDIUM, UiTheme.TEXT],
 		["NEW BEST!" if new_best else "Best  %d" % best, UiTheme.FONT_MEDIUM, Color("#f7d046") if new_best else UiTheme.DIM],
-		["Stars  +%d   (total %d)" % [stars, total_stars], UiTheme.FONT_SMALL, UiTheme.TEXT],
+		["Stars  +%d   (endless total %d)" % [stars, total_stars], UiTheme.FONT_SMALL, UiTheme.TEXT],
 	]
 	for l in lines:
 		var lab := Label.new()
@@ -150,8 +234,32 @@ func show_game_over(score: int, best: int, new_best: bool, stars: int, total_sta
 		var b := Button.new()
 		b.text = item[0]
 		b.pressed.connect(item[1].emit)
+		guard_panel_button(b)
 		row.add_child(b)
-	row.get_child(1).grab_focus()
+	_arm_buttons(row, row.get_child_count() - 1)
+
+
+func _begin_end_panel() -> void:
+	_ended = true
+	_queue.clear()
+	_showing = false
+	if _flash_tween:
+		_flash_tween.kill()
+	_message.text = ""
+	hide_quit_prompt()
+	set_hint("Esc: menu")
+	queue_redraw()
+
+
+func _arm_buttons(row: Container, focus_index: int) -> void:
+	for b in row.get_children():
+		(b as Button).disabled = true
+	await get_tree().create_timer(PANEL_INPUT_DELAY).timeout
+	if not is_instance_valid(row) or not row.is_inside_tree():
+		return
+	for b in row.get_children():
+		(b as Button).disabled = false
+	row.get_child(focus_index).grab_focus()
 
 
 func watch_ball(ball: Ball) -> void:
@@ -221,12 +329,15 @@ func set_stars(n: int) -> void:
 func show_message(text: String) -> void:
 	if _flash_tween:
 		_flash_tween.kill()
+	_showing = false
+	_queue.clear()
 	_message.modulate.a = 1.0
 	_message.remove_theme_color_override("font_color")
 	_message.text = text
 
 
 func show_complete(stars: int, total: int, has_next: bool) -> void:
+	_begin_end_panel()
 	_panel = PanelContainer.new()
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -257,37 +368,49 @@ func show_complete(stars: int, total: int, has_next: bool) -> void:
 		var b := Button.new()
 		b.text = item[0]
 		b.pressed.connect(item[1].emit)
+		guard_panel_button(b)
 		row.add_child(b)
-	row.get_child(row.get_child_count() - 1).grab_focus()
+	_arm_buttons(row, row.get_child_count() - 1)
+
+
+func boss_bar_visible() -> bool:
+	return _boss_max > 0 and not _ended
+
+
+func shield_icon_visible() -> bool:
+	return _shield and not _ended
 
 
 func _draw() -> void:
 	if _frame == null:
 		return
-	var left_box := Rect2(16, 12, 40 + _max_lives * 38 + (38 if _shield else 0), 58)
+	var shield := _shield and not _ended
+	var ammo := 0 if _ended else _ammo
+	var boost := 0.0 if _ended else _boost
+	var left_box := Rect2(16, 12, 40 + _max_lives * 38 + (38 if shield else 0), 58)
 	draw_style_box(_frame, left_box)
 	for i in _max_lives:
 		var col := Color.WHITE if i < _lives else Color(1, 1, 1, 0.2)
 		draw_texture_rect(HEART_TEX, Rect2(Vector2(34 + i * 38, 25), Vector2(32, 32)), false, col)
-	if _shield:
+	if shield:
 		draw_texture_rect(SHIELD_TEX, Rect2(Vector2(34 + _max_lives * 38, 25), Vector2(32, 32)), false)
-	if _boost > 0.0:
-		var by := 74.0 + (78.0 if _ammo > 0 else 0.0)
+	if boost > 0.0:
+		var by := 74.0 + (78.0 if ammo > 0 else 0.0)
 		var boost_box := Rect2(16, by, 150, 52)
 		draw_style_box(_frame, boost_box)
 		draw_texture_rect(BOOST_TEX, Rect2(boost_box.position + Vector2(14, 10), Vector2(32, 32)), false)
 		var bar := Rect2(boost_box.position + Vector2(56, 22), Vector2(78, 10))
 		draw_rect(bar, Color("#123018"))
-		draw_rect(Rect2(bar.position, Vector2(bar.size.x * clampf(_boost / _boost_full, 0.0, 1.0), bar.size.y)), Color("#22b14c"))
-	if _ammo > 0:
+		draw_rect(Rect2(bar.position, Vector2(bar.size.x * clampf(boost / _boost_full, 0.0, 1.0), bar.size.y)), Color("#22b14c"))
+	if ammo > 0:
 		var ammo_box := Rect2(16, 74, 150, 52)
 		draw_style_box(_frame, ammo_box)
 		PixelArt.draw(self, PixelArt.GUN, ammo_box.position + Vector2(20, 16), 3.0)
-		draw_string(get_theme_default_font(), ammo_box.position + Vector2(64, 35), "x %d" % _ammo,
+		draw_string(get_theme_default_font(), ammo_box.position + Vector2(64, 35), "x %d" % ammo,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_MEDIUM, UiTheme.TEXT)
 		draw_string(get_theme_default_font(), ammo_box.position + Vector2(14, 74), "Shoot: F / J   (hold A / D to aim up)",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, UiTheme.FONT_SMALL, UiTheme.DIM)
-	if _boss_max > 0:
+	if _boss_max > 0 and not _ended:
 		_draw_boss_bar()
 
 	var right_box := Rect2(size.x - 196, 12, 180, 58)
@@ -309,7 +432,7 @@ func _pixel_icon(pattern: Array, pos: Vector2, col: Color) -> void:
 
 func _draw_boss_bar() -> void:
 	var w := 520.0
-	var y := 128.0 if _endless else 64.0
+	var y := ENDLESS_BOSS_BAR_Y if _endless else 64.0
 	var bar := Rect2((size.x - w) / 2.0, y, w, 46)
 	draw_style_box(_frame, bar)
 	var font := get_theme_default_font()

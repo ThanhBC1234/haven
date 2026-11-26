@@ -39,7 +39,7 @@ const HOW_TO_PLAY := [
 		"After it hits a wall it is dizzy. Shoot it, or jump on its head. Every hit = 1 damage."]],
 	["ITEMS", [
 		"Heart: +1 life.   Shield: blocks one hit.   Green arrow: higher jumps for 10 seconds.",
-		"Star: points.   R: respawn.   Esc: menu."]],
+		"Star: points.   R: back to checkpoint (-1 life).   Esc twice: menu."]],
 ]
 
 
@@ -92,7 +92,9 @@ func _ready() -> void:
 	bank_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
 	bank.add_child(bank_icon)
 	var bank_text := Label.new()
-	bank_text.text = "%d stars collected" % Game.total_stars
+	bank_text.text = "%d / %d stars collected" % [Game.story_stars(), Game.story_star_total()]
+	if Game.endless_stars > 0:
+		bank_text.text += "   +%d endless" % Game.endless_stars
 	bank_text.add_theme_color_override("font_color", Color("#f7d046"))
 	bank.add_child(bank_text)
 	brawl_row = HBoxContainer.new()
@@ -120,6 +122,12 @@ func _ready() -> void:
 	brawl_row.add_child(chained_button)
 	level_grid.get_parent().add_child(brawl_row)
 	level_grid.get_parent().move_child(brawl_row, level_grid.get_index() + 1)
+	brawl_button.focus_neighbor_left = brawl_button.get_path()
+	brawl_button.focus_neighbor_right = bot_button.get_path()
+	bot_button.focus_neighbor_left = brawl_button.get_path()
+	bot_button.focus_neighbor_right = chained_button.get_path()
+	chained_button.focus_neighbor_left = bot_button.get_path()
+	chained_button.focus_neighbor_right = chained_button.get_path()
 	two_player_hint = Label.new()
 	two_player_hint.text = "Alone? Try BRAWL VS BOT.  Two players share one keyboard."
 	two_player_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -132,6 +140,12 @@ func _ready() -> void:
 	level_grid.columns = 2
 	level_grid.custom_minimum_size = Vector2(912, 0)
 	level_grid.add_theme_constant_override("h_separation", 12)
+	var cell := 0.0
+	for b in level_grid.get_children():
+		cell = maxf(cell, b.get_combined_minimum_size().x)
+	cell = maxf(cell, (level_grid.custom_minimum_size.x - level_grid.get_theme_constant("h_separation")) / 2.0)
+	for b in level_grid.get_children():
+		b.custom_minimum_size.x = cell
 	var bottom_row := HBoxContainer.new()
 	bottom_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	bottom_row.add_theme_constant_override("separation", 12)
@@ -147,7 +161,14 @@ func _ready() -> void:
 	quit_button.custom_minimum_size = Vector2(160, 52)
 	quit_button.pressed.connect(get_tree().quit)
 	quit_button.visible = not OS.has_feature("web")
-	level_grid.get_child(0).grab_focus()
+	for b: Button in $Center.find_children("*", "Button", true, false):
+		Hud.guard_panel_button(b)
+	_focus_default()
+
+
+func _focus_default() -> void:
+	var first: Control = level_grid.get_child(1) if level_grid.get_child_count() > 1 else level_grid.get_child(0)
+	first.grab_focus()
 
 
 func _star_texture() -> ImageTexture:
@@ -183,6 +204,7 @@ func _two_player_help() -> Array:
 	return [
 		["KEYS", [
 			"P1: A / D + W or SPACE, S = item / anchor.   P2: LEFT / RIGHT + UP, DOWN = item / anchor.",
+			"VS BOT: A/D or Left/Right tilt, W/Space/Up jump, S/Down or F/J item.",
 			"Hold left / right to tilt and charge, press jump to launch."]],
 		["BOUNCE BRAWL", [
 			"Stomp their head, or knock them into pits and spikes. First to %d wins." % Brawl.WIN_SCORE,
@@ -192,7 +214,8 @@ func _two_player_help() -> Array:
 			"You are tied by a rope. Stars on the rope slide to whoever is LOWER.",
 			"At the finish each star counts for whoever is closer to it. Most stars wins.",
 			"Hold S / DOWN to anchor and slingshot your partner. Stomp your partner to steal a star.",
-			"The loser carries the winner on their head next round."]],
+			"The loser carries the winner on their head next round.",
+			"Hold R to restart from the checkpoint (costs a shared life). Press Esc twice to quit."]],
 	]
 
 
@@ -243,6 +266,7 @@ func _show_howto_page(page: int) -> void:
 	howto_back = Button.new()
 	howto_back.text = "Back"
 	howto_back.disabled = howto_page == 0
+	howto_back.focus_mode = Control.FOCUS_NONE if howto_back.disabled else Control.FOCUS_ALL
 	howto_back.pressed.connect(_show_howto_page.bind(howto_page - 1))
 	row.add_child(howto_back)
 	howto_close = Button.new()
@@ -252,8 +276,11 @@ func _show_howto_page(page: int) -> void:
 	howto_next = Button.new()
 	howto_next.text = "Next"
 	howto_next.disabled = howto_page >= PAGE_TITLES.size() - 1
+	howto_next.focus_mode = Control.FOCUS_NONE if howto_next.disabled else Control.FOCUS_ALL
 	howto_next.pressed.connect(_show_howto_page.bind(howto_page + 1))
 	row.add_child(howto_next)
+	for b: Button in [howto_back, howto_close, howto_next]:
+		Hud.guard_panel_button(b)
 	(howto_close if howto_next.disabled else howto_next).grab_focus()
 
 
@@ -265,7 +292,7 @@ func _hide_howto() -> void:
 		howto_back = null
 		howto_close = null
 		$Center.show()
-		level_grid.get_child(0).grab_focus()
+		_focus_default()
 
 
 func _unhandled_input(event: InputEvent) -> void:

@@ -17,8 +17,19 @@ const GOAL_DELAY := 0.9
 const GOAL_SECONDS := 2.4
 const PLAYER2_CHAR := "P"
 const MIN_ZOOM := 0.75
+const ZOOM_NEAR := 160.0
+const ZOOM_FAR := 320.0
+const ZOOM_DEADBAND := 0.04
+const RESTART_HOLD_SECONDS := 0.6
+const FIT_MIN_ZOOM := 0.45
+const FIT_MARGIN := Vector2(110.0, 150.0)
+const VIEW_MARGIN := Vector2(70.0, 90.0)
+const QUIT_CONFIRM_SECONDS := 2.0
+const SCATTER_RANGE := 320.0
+const SCATTER_CLEAR := 88.0
+const SCATTER_MAX_DROP := 120.0
 const SCATTER_OFFSETS := [64.0, -64.0, 96.0, -96.0, 128.0, -128.0, 160.0, -160.0, 192.0, -192.0, 224.0, -224.0]
-const CAUSE_TEXT := {"pit": "SPLASH!", "hurt": "OUCH!"}
+const CAUSE_TEXT := {"pit": "SPLASH!", "hurt": "OUCH!", "restart": "RESTART!"}
 
 @export var intro_seconds := 1.6
 @export var respawn_delay := 1.0
@@ -45,6 +56,10 @@ var finished := false
 var _busy := false
 var _base_totals: Array[int] = [0, 0]
 var _zoom := 1.0
+var _quit_armed := 0.0
+var _restart_hold := 0.0
+var _restart_locked := false
+var _zoom_goal := 1.0
 
 
 func _ready() -> void:
@@ -63,7 +78,7 @@ func _ready() -> void:
 	camera.limit_left = 0
 	camera.limit_right = int(level.size.x)
 	camera.limit_bottom = int(level.size.y) + 96
-	camera.limit_top = mini(-64, int(level.size.y - 720.0 / MIN_ZOOM))
+	camera.limit_top = mini(-64, int(level.size.y - 720.0 / FIT_MIN_ZOOM))
 	camera.position_smoothing_enabled = false
 
 	var bounds := StaticBody2D.new()
@@ -103,6 +118,7 @@ func _ready() -> void:
 	level.finished.connect(_on_finished)
 
 	hud.setup(level_name, LIVES)
+	_sync_hearts()
 	hud.next_pressed.connect(func() -> void: Game.start_chained(Game.chained_index + 1))
 	hud.retry_pressed.connect(_on_retry)
 	hud.menu_pressed.connect(Game.go_to_menu)
@@ -162,10 +178,19 @@ func has_next_level() -> bool:
 
 
 func _physics_process(delta: float) -> void:
+	if _quit_armed > 0.0:
+		_quit_armed = maxf(0.0, _quit_armed - delta)
+		if _quit_armed <= 0.0:
+			hud.hide_quit_prompt()
 	if Input.is_action_just_pressed("back"):
-		Game.go_to_menu()
-		return
-	_update_camera(delta)
+		if _quit_armed > 0.0:
+			Game.go_to_menu()
+			return
+		_quit_armed = QUIT_CONFIRM_SECONDS
+		hud.show_quit_prompt(QUIT_CONFIRM_SECONDS)
+	_tick_restart_hold(delta)
+	if not _busy:
+		_update_camera(delta)
 	if not match_running or _busy:
 		return
 	for ball in balls:
@@ -176,22 +201,65 @@ func _physics_process(delta: float) -> void:
 	hud.set_counts(c.x, c.y)
 
 
+func _tick_restart_hold(delta: float) -> void:
+	var pressed := Input.is_action_pressed("restart")
+	if not pressed:
+		_restart_locked = false
+	elif not match_running or _busy:
+		_restart_locked = true
+	if pressed and not _restart_locked:
+		_restart_hold += delta
+		if _restart_hold >= RESTART_HOLD_SECONDS:
+			_restart_hold = 0.0
+			_restart_locked = true
+			hud.set_restart_hold(0.0)
+			kill_both("restart")
+			return
+	else:
+		_restart_hold = 0.0
+	hud.set_restart_hold(_restart_hold / RESTART_HOLD_SECONDS)
+
+
 func _update_camera(delta: float, snap := false) -> void:
 	var a := balls[0].global_position
 	var b := balls[1].global_position
 	var target := (a + b) / 2.0 + Vector2(0.0, -40.0)
-	var want_zoom := zoom_for_separation(a.distance_to(b))
+	var fit := _fit_zoom(a, b)
+	var raw_zoom := zoom_for_separation(a.distance_to(b))
+	if snap or absf(raw_zoom - _zoom_goal) > ZOOM_DEADBAND or raw_zoom >= 1.0 or raw_zoom <= MIN_ZOOM:
+		_zoom_goal = raw_zoom
+	var want_zoom := minf(_zoom_goal, fit)
 	if snap:
 		camera.global_position = target
 		_zoom = want_zoom
 	else:
 		camera.global_position = camera.global_position.lerp(target, 1.0 - exp(-6.0 * delta))
 		_zoom = lerpf(_zoom, want_zoom, 1.0 - exp(-3.0 * delta))
+		_zoom = minf(_zoom, fit)
 	camera.zoom = Vector2(_zoom, _zoom)
+	_keep_in_view(a, b)
+
+
+func _fit_zoom(a: Vector2, b: Vector2) -> float:
+	var view := get_viewport_rect().size
+	var fit_x := (view.x - 2.0 * FIT_MARGIN.x) / maxf(absf(a.x - b.x), 1.0)
+	var fit_y := (view.y - 2.0 * FIT_MARGIN.y) / maxf(absf(a.y - b.y), 1.0)
+	return clampf(minf(fit_x, fit_y), FIT_MIN_ZOOM, 1.0)
+
+
+func _keep_in_view(a: Vector2, b: Vector2) -> void:
+	var half := get_viewport_rect().size / (2.0 * _zoom)
+	var margin := VIEW_MARGIN / _zoom
+	var lo := Vector2(maxf(a.x, b.x), maxf(a.y, b.y)) - half + margin
+	var hi := Vector2(minf(a.x, b.x), minf(a.y, b.y)) + half - margin
+	var pos := camera.global_position
+	pos.x = clampf(pos.x, lo.x, hi.x) if lo.x <= hi.x else (a.x + b.x) / 2.0
+	pos.y = clampf(pos.y, lo.y, hi.y) if lo.y <= hi.y else (a.y + b.y) / 2.0
+	camera.global_position = pos
 
 
 func zoom_for_separation(dist: float) -> float:
-	var f := clampf(inverse_lerp(rope.rest_length, rope.max_length, dist), 0.0, 1.0)
+	var f := clampf((dist - ZOOM_NEAR) / (ZOOM_FAR - ZOOM_NEAR), 0.0, 1.0)
 	return lerpf(1.0, MIN_ZOOM, f)
 
 
@@ -202,9 +270,18 @@ func _on_star(by: Ball) -> void:
 
 
 func _on_heart() -> void:
+	if lives >= LIVES:
+		return
 	lives = mini(LIVES, lives + 1)
+	_sync_hearts()
 	hud.set_lives(lives)
 	hud.flash("+1 LIFE!", 0.9, Color("#ff6b81"))
+
+
+func _sync_hearts() -> void:
+	for node in level.get_children():
+		if node is Pickup and node.kind == "heart" and not node.is_queued_for_deletion():
+			node.set_deferred("monitoring", lives < LIVES)
 
 
 func _on_checkpoint(pos: Vector2) -> void:
@@ -230,6 +307,7 @@ func kill_both(cause: String, culprit: Ball = null) -> void:
 	_busy = true
 	lives -= 1
 	hud.set_lives(maxi(lives, 0))
+	_sync_hearts()
 	for ball in balls:
 		ball.dead = true
 	players_died.emit(cause)
@@ -240,6 +318,7 @@ func _death_sequence(cause: String, culprit: Ball) -> void:
 	var dropped := 0
 	if culprit != null:
 		dropped = rope.drop_beads(culprit.player_id)
+	rope.release_pins()
 	for ball in balls:
 		_pop_effect(ball.global_position, ChainedHud.PLAYER_COLORS[ball.player_id - 1])
 		ball.hide()
@@ -261,10 +340,10 @@ func _death_sequence(cause: String, culprit: Ball) -> void:
 	await get_tree().create_timer(respawn_delay).timeout
 	if not is_inside_tree():
 		return
-	_respawn(dropped)
+	_respawn(dropped, culprit.player_id if culprit != null else 1)
 
 
-func _respawn(dropped: int) -> void:
+func _respawn(dropped: int, owner_id := 1) -> void:
 	level.reset_crates()
 	for ball in balls:
 		ball.teleport(respawn_points[ball.player_id - 1])
@@ -274,42 +353,33 @@ func _respawn(dropped: int) -> void:
 		ball.dead = false
 	rope.reset()
 	rope.show()
-	_scatter_stars(dropped)
+	_scatter_stars(dropped, owner_id)
 	_update_camera(0.0, true)
 	_busy = false
 	players_respawned.emit()
 
 
-func _scatter_stars(count: int) -> void:
+func _scatter_stars(count: int, owner_id := 1) -> void:
 	var placed := 0
+	var owner_spot := respawn_points[clampi(owner_id, 1, 2) - 1] + Vector2(0.0, ChainedPlacement.STAR_LIFT)
 	for tier in 4:
+		var tier_spots: Array[Vector2] = []
 		for off: float in SCATTER_OFFSETS:
 			if placed >= count:
 				return
-			var ground = _ground_point(respawn_position.x + off)
-			if ground == null:
-				continue
+			var from := Vector2(respawn_position.x + off, respawn_position.y - 32.0)
+			var spot := ChainedPlacement.find(self, from, tier_spots, owner_spot, {"range": SCATTER_RANGE, "max_drop": SCATTER_MAX_DROP, "avoid_points": respawn_points, "avoid_radius": SCATTER_CLEAR})
+			tier_spots.append(spot["ground"])
+			var origin: Vector2 = spot["ground"]
+			var lift := 40.0 * tier if spot["ok"] else 0.0
+			while lift > 0.0 and not ChainedPlacement.star_clear(self, origin + Vector2(0.0, -lift)):
+				lift -= 40.0
 			var star: Pickup = Level.PICKUP.instantiate()
 			star.kind = "star"
-			star.position = ground + Vector2(0.0, -40.0 * tier)
+			star.position = origin + Vector2(0.0, -lift)
 			level.add_child(star)
 			dropped_stars.append(star)
 			placed += 1
-
-
-func _ground_point(x: float):
-	var from := Vector2(x, respawn_position.y - 48.0)
-	var query := PhysicsRayQueryParameters2D.create(from, from + Vector2(0.0, 120.0), 1)
-	var hit := get_world_2d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return null
-	var point: Vector2 = hit["position"]
-	var tile_c := int(point.x / Level.TILE)
-	var tile_r := int(point.y / Level.TILE) - 1
-	var above := level.char_at(tile_r, tile_c)
-	if above == "^" or above == "v" or above == "T":
-		return null
-	return point
 
 
 func _pop_effect(pos: Vector2, color: Color) -> void:
@@ -334,12 +404,15 @@ func _pop_effect(pos: Vector2, color: Color) -> void:
 func restart_level() -> void:
 	restart_requested.emit()
 	if scene_changes_enabled:
-		Game.start_chained(Game.chained_index)
+		Game.chained_piggyback = piggyback.start_penalty
+		Game.start_chained(Game.chained_index, true)
 
 
 func _on_retry() -> void:
 	Game.chained_totals[0] = _base_totals[0]
 	Game.chained_totals[1] = _base_totals[1]
+	if not has_next_level():
+		Game.chained_piggyback = piggyback.start_penalty
 	Game.start_chained(Game.chained_index, true)
 
 
@@ -362,7 +435,8 @@ func _on_finished() -> void:
 	await get_tree().create_timer(finish_panel_delay).timeout
 	if not is_inside_tree():
 		return
-	piggyback.record_result(result)
+	if has_next_level():
+		piggyback.record_result(result)
 	hud.show_result(result, Game.chained_totals, has_next_level())
 
 

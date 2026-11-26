@@ -13,6 +13,8 @@ const HEART_TEX := preload("res://assets/items/heart.png")
 const HEART_SIZE := 28.0
 const HEART_GAP := 4.0
 const PANEL_KEY_DELAY := 0.6
+const RESTART_BAR := Vector2(240, 14)
+const RESTART_BAR_BOTTOM := 118.0
 
 var level_name := ""
 var max_lives := 5
@@ -25,12 +27,17 @@ var result_p1: Label
 var result_p2: Label
 var result_totals: Label
 var result_piggyback: Label
+var result_overall: Label
+var quit_label: Label
 var next_button: Button
 var retry_button: Button
 var menu_button: Button
 var panel_keys_ready := false
+var restart_hold := 0.0
 var _frame: StyleBoxTexture
 var _flash_tween: Tween
+var _piggyback_banner := false
+var _quit_tween: Tween
 
 
 func setup(title: String, lives_max: int) -> void:
@@ -54,7 +61,17 @@ func setup(title: String, lives_max: int) -> void:
 
 	_add_hint("P1: A / D + W / SPACE, S: anchor", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
 	_add_hint("P2: LEFT / RIGHT + UP, DOWN: anchor", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
-	_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
+	_add_hint("Hold R: back to checkpoint (-1 life)    Esc twice: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
+
+	quit_label = Label.new()
+	quit_label.text = "PRESS ESC AGAIN TO QUIT"
+	quit_label.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
+	quit_label.add_theme_color_override("font_color", Color("#ffb020"))
+	quit_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	quit_label.add_theme_constant_override("outline_size", 8)
+	quit_label.visible = false
+	add_child(quit_label)
+	quit_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 56)
 	queue_redraw()
 
 
@@ -90,6 +107,36 @@ func flash(text: String, seconds := 0.9, color := UiTheme.ACCENT) -> void:
 	_flash_tween = create_tween()
 	_flash_tween.tween_interval(seconds)
 	_flash_tween.tween_property(message_label, "modulate:a", 0.0, 0.5)
+
+
+func show_quit_prompt(seconds := 2.0) -> void:
+	if quit_label == null:
+		return
+	quit_label.visible = true
+	if _quit_tween:
+		_quit_tween.kill()
+	_quit_tween = create_tween()
+	_quit_tween.tween_interval(seconds)
+	_quit_tween.tween_callback(hide_quit_prompt)
+
+
+func hide_quit_prompt() -> void:
+	if _quit_tween:
+		_quit_tween.kill()
+	if quit_label != null:
+		quit_label.visible = false
+
+
+func set_restart_hold(fraction: float) -> void:
+	var f := clampf(fraction, 0.0, 1.0)
+	if is_equal_approx(f, restart_hold):
+		return
+	restart_hold = f
+	queue_redraw()
+
+
+func message_active() -> bool:
+	return message_label != null and message_label.modulate.a > 0.01
 
 
 func clear_message() -> void:
@@ -137,7 +184,11 @@ func show_result(result: Vector2i, totals: Array, has_next: bool) -> void:
 	stars_row.add_child(result_p2)
 	result_totals = _result_label("TOTAL   P1 %d  -  %d P2" % [totals[0], totals[1]], UiTheme.TEXT, UiTheme.FONT_MEDIUM)
 	box.add_child(result_totals)
-	if win != 0:
+	if not has_next:
+		var overall := winner_of(Vector2i(totals[0], totals[1]))
+		result_overall = _result_label("THE RUN IS A TIE!" if overall == 0 else "PLAYER %d WINS THE RUN!" % overall, UiTheme.ACCENT if overall == 0 else PLAYER_COLORS[overall - 1], UiTheme.FONT_LARGE)
+		box.add_child(result_overall)
+	if win != 0 and has_next:
 		result_piggyback = _result_label("P%d MUST CARRY P%d NEXT ROUND!" % [3 - win, win], PLAYER_COLORS[2 - win], UiTheme.FONT_MEDIUM)
 		box.add_child(result_piggyback)
 	var row := HBoxContainer.new()
@@ -160,6 +211,8 @@ func show_result(result: Vector2i, totals: Array, has_next: bool) -> void:
 	var buttons: Array = [retry_button, menu_button]
 	if next_button != null:
 		buttons.push_front(next_button)
+	for b: Button in buttons:
+		Hud.guard_panel_button(b)
 	_arm_panel_keys(buttons, next_button if next_button != null else retry_button)
 
 
@@ -209,6 +262,11 @@ func _draw() -> void:
 		draw_texture_rect(HEART_TEX, Rect2(pos, Vector2(HEART_SIZE, HEART_SIZE)), false, tint)
 	if event_state != "":
 		_draw_event_banner(font, mid)
+	if restart_hold > 0.0:
+		var bar := Rect2(Vector2(mid - RESTART_BAR.x / 2.0, size.y - RESTART_BAR_BOTTOM - RESTART_BAR.y), RESTART_BAR)
+		draw_string(font, Vector2(mid - 200.0, bar.position.y - 8), "HOLD R: BACK TO CHECKPOINT", HORIZONTAL_ALIGNMENT_CENTER, 400.0, UiTheme.FONT_SMALL, Color("#ff9a5d"))
+		draw_rect(bar.grow(2), Color("#05080c"))
+		draw_rect(Rect2(bar.position, Vector2(bar.size.x * restart_hold, bar.size.y)), Color("#ff9a5d"))
 
 
 func _draw_star(pos: Vector2) -> void:
@@ -227,6 +285,7 @@ const EVENT_SIZE_ACTIVE := Vector2(460, 62)
 const EVENT_ACTIVE_Y := 84.0
 const MESSAGE_Y := 132.0
 const MESSAGE_Y_EVENT := 156.0
+const MESSAGE_Y_PIGGYBACK := 180.0
 const ROULETTE_TICKS := 18
 
 var event_state := ""
@@ -254,7 +313,7 @@ func show_event_roulette(names: Array, chosen: String, seconds := 2.0, color := 
 	_event_color = color
 	event_state = "roulette"
 	event_text = _roulette_ticks[0][1]
-	_set_message_y(MESSAGE_Y)
+	_apply_message_y()
 	set_process(true)
 	queue_redraw()
 
@@ -266,7 +325,7 @@ func show_event(event_name: String, seconds: float, color := UiTheme.ACCENT) -> 
 	_event_seconds = maxf(seconds, 0.01)
 	_event_time = 0.0
 	event_fraction = 1.0
-	_set_message_y(MESSAGE_Y_EVENT)
+	_apply_message_y()
 	set_process(true)
 	queue_redraw()
 
@@ -284,14 +343,25 @@ func hide_event() -> void:
 	event_text = ""
 	event_fraction = 0.0
 	_roulette_ticks.clear()
-	_set_message_y(MESSAGE_Y)
+	_apply_message_y()
 	set_process(false)
 	queue_redraw()
 
 
-func _set_message_y(y: float) -> void:
-	if message_label != null:
-		message_label.position.y = y
+func set_piggyback_banner(on: bool) -> void:
+	_piggyback_banner = on
+	_apply_message_y()
+
+
+func _apply_message_y() -> void:
+	if message_label == null:
+		return
+	var y := MESSAGE_Y
+	if event_state == "active":
+		y = maxf(y, MESSAGE_Y_EVENT)
+	if _piggyback_banner:
+		y = maxf(y, MESSAGE_Y_PIGGYBACK)
+	message_label.position.y = y
 
 
 func _process(delta: float) -> void:

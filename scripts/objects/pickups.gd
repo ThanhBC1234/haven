@@ -18,6 +18,15 @@ const CHECKPOINT_HEIGHT := 320.0
 var used := false
 var _time := 0.0
 var _squash := 0.0
+var _waiting := false
+
+
+func _physics_process(_delta: float) -> void:
+	if not _waiting or used or not monitoring:
+		return
+	_waiting = false
+	for body in get_overlapping_bodies():
+		_on_body_entered(body)
 
 
 func _ready() -> void:
@@ -63,11 +72,17 @@ func _on_body_entered(body: Node2D) -> void:
 		"heart":
 			if used:
 				return
+			if not level.heart_wanted():
+				_waiting = true
+				return
 			used = true
 			level.collect_heart()
 			queue_free()
 		"shield":
 			if used:
+				return
+			if body.has_shield:
+				_waiting = true
 				return
 			used = true
 			body.give_shield()

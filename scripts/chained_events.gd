@@ -15,13 +15,15 @@ const EVENT_COLORS := {
 }
 const TILE := 32.0
 const GROUND_LAYER := 1
-const GROUND_STEP := 16.0
 const GROUND_RANGE := 640.0
-const EDGE_MARGIN := 10.0
 const STAR_SPACING := 20.0
 const STAR_FALL_SECONDS := 0.4
-const WALL_MARGIN := 48.0
-const SKIPPED_ABOVE := "^vT"
+const FREE_MAX_APART := 1700.0
+const RATCHET_SLACK := 6.0
+const RECOVER_RATE := 240.0
+const SHRINK_PULL_CAP := 400.0
+const SAFE_STEP := 32.0
+const SAFE_INTERVAL := 0.1
 
 var enabled := true
 var interval := 20.0
@@ -70,6 +72,8 @@ var _reattach_left := 0.0
 var _rope_base := {}
 var _rope_goal := {}
 var _rope_rate := {}
+var _safe_left := 0.0
+var _safe := true
 var _rope_restoring := false
 var _quake_v := {}
 var _quake_clock := 0.0
@@ -218,7 +222,7 @@ func _physics_process(delta: float) -> void:
 			_begin(rolling_event)
 	elif active_event != "":
 		_tick_active(delta)
-	elif enabled and _next_in <= 0.0 and not reattach_pending and not _players_dead():
+	elif enabled and _next_in <= 0.0 and not reattach_pending and not _players_dead() and not chained.piggyback.piggyback_active and not _message_showing():
 		_start_roulette(pick_event())
 
 
@@ -239,6 +243,10 @@ func _tick_active(delta: float) -> void:
 
 func _players_dead() -> bool:
 	return chained.balls[0].dead or chained.balls[1].dead
+
+
+func _message_showing() -> bool:
+	return _hud() != null and _hud().message_active()
 
 
 func _hud() -> ChainedHud:
@@ -340,25 +348,73 @@ func _rope_to(goal: Dictionary, restoring: bool) -> void:
 		_rope_base = {"rest": rope.rest_length, "max": rope.max_length, "stiff": rope.stiffness, "damp": rope.damping}
 	_rope_goal = goal.duplicate()
 	_rope_rate.clear()
+	var seconds := maxf(glide_seconds, 0.05)
+	for key in ["rest", "max"]:
+		if not _rope_goal.has(key):
+			continue
+		var gap: float = _rope_goal[key] - _rope_get(key)
+		_rope_rate[key] = RECOVER_RATE if gap < 0.0 else maxf(gap / maxf(glide_seconds, 0.05), 0.001)
+		seconds = maxf(seconds, absf(gap) / _rope_rate[key])
 	for key in _rope_goal:
-		_rope_rate[key] = maxf(absf(_rope_goal[key] - _rope_get(key)) / maxf(glide_seconds, 0.05), 0.001)
+		if not _rope_rate.has(key):
+			_rope_rate[key] = maxf(absf(_rope_goal[key] - _rope_get(key)) / seconds, 0.001)
 	_rope_restoring = restoring
+	_safe_left = 0.0
+	_sync_pull_cap()
 
 
 func _rope_step(delta: float) -> void:
 	if _rope_goal.is_empty() or not is_instance_valid(chained.rope):
 		return
+	var rope := chained.rope
 	var done := true
+	var safe := _pull_is_safe(delta)
+	var apart := rope.current_length()
 	for key in _rope_goal:
-		var next := move_toward(_rope_get(key), _rope_goal[key], _rope_rate[key] * delta)
+		var cur := _rope_get(key)
+		var next := move_toward(cur, _rope_goal[key], _rope_rate[key] * delta)
+		if not safe and next < cur and (key == "rest" or key == "max"):
+			var floor_value := apart + (RATCHET_SLACK if key == "max" else 0.0)
+			next = maxf(next, floor_value)
 		_rope_set(key, next)
 		if next != _rope_goal[key]:
 			done = false
+	rope.max_length = maxf(rope.max_length, rope.rest_length)
 	if done:
 		_rope_goal = {}
+		_sync_pull_cap()
 		if _rope_restoring:
 			_rope_base = {}
 			_rope_restoring = false
+
+
+func _pull_is_safe(delta: float) -> bool:
+	_safe_left -= delta
+	if _safe_left > 0.0:
+		return _safe
+	_safe_left = SAFE_INTERVAL
+	_safe = true
+	var a := chained.balls[0].global_position
+	var b := chained.balls[1].global_position
+	var steps := maxi(1, ceili(a.distance_to(b) / SAFE_STEP))
+	var space := chained.get_world_2d().direct_space_state
+	var point := PhysicsPointQueryParameters2D.new()
+	point.collision_mask = GROUND_LAYER
+	for i in steps + 1:
+		var p := a.lerp(b, float(i) / steps)
+		point.position = p
+		if not space.intersect_point(point, 1).is_empty():
+			continue
+		var query := PhysicsRayQueryParameters2D.create(p, Vector2(p.x, chained.level.size.y + 64.0), GROUND_LAYER)
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			_safe = false
+			break
+		var above := chained.level.char_at(int(hit["position"].y / TILE) - 1, int(hit["position"].x / TILE))
+		if ChainedPlacement.SKIPPED_ABOVE.contains(above):
+			_safe = false
+			break
+	return _safe
 
 
 func _rope_instant_restore() -> void:
@@ -369,6 +425,12 @@ func _rope_instant_restore() -> void:
 	_rope_goal = {}
 	_rope_rate.clear()
 	_rope_restoring = false
+	_sync_pull_cap()
+
+
+func _sync_pull_cap() -> void:
+	if is_instance_valid(chained.rope):
+		chained.rope.pull_speed_cap = SHRINK_PULL_CAP if not _rope_goal.is_empty() else 0.0
 
 
 func _rope_get(key: String) -> float:
@@ -448,66 +510,26 @@ func _freedom_cut() -> void:
 	var beads: Array = rope.beads.duplicate()
 	for bead in beads:
 		var from := end_a.lerp(end_b, bead.t)
-		var spot = _landing_spot(from, placed)
-		if spot == null:
-			spot = chained.respawn_position + Vector2(0.0, 16.0)
-		placed.append(spot)
-		_drop_star(from, spot)
+		var owner_ball := chained.balls[0] if bead.u < 0.5 else chained.balls[1]
+		var spot := ChainedPlacement.find(chained, from, placed, _pos(owner_ball) + Vector2(0.0, ChainedPlacement.STAR_LIFT), {"range": GROUND_RANGE, "spacing": STAR_SPACING})
+		placed.append(spot["ground"])
+		_drop_star(spot["start"], spot["ground"])
 	rope.beads.clear()
 	rope.cut = true
+	rope.free_limit = FREE_MAX_APART
 	_cut_owned = true
 
 
 func _drop_star(from: Vector2, to: Vector2) -> void:
 	var star: Pickup = Level.PICKUP.instantiate()
 	star.kind = "star"
-	star.position = Vector2(to.x, minf(from.y, to.y))
+	star.position = from
 	chained.level.add_child(star)
 	freedom_stars.append(star)
-	if star.position.y < to.y:
+	if from.y < to.y - 0.5:
 		star.create_tween().tween_property(star, "position", to, STAR_FALL_SECONDS).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	else:
 		star.position = to
-
-
-func _landing_spot(from: Vector2, placed: Array[Vector2]):
-	var steps := int(GROUND_RANGE / GROUND_STEP)
-	for k in steps + 1:
-		for side in [1, -1]:
-			if k == 0 and side == -1:
-				continue
-			var spot = _ground_at(from.x + side * k * GROUND_STEP, from.y - 8.0)
-			if spot == null:
-				continue
-			var crowded := false
-			for p in placed:
-				if p.distance_to(spot) < STAR_SPACING:
-					crowded = true
-					break
-			if not crowded:
-				return spot
-	return null
-
-
-func _ground_at(x: float, y: float):
-	var level := chained.level
-	if x < WALL_MARGIN or x > level.size.x - WALL_MARGIN:
-		return null
-	var space := chained.get_world_2d().direct_space_state
-	var point := Vector2.ZERO
-	for dx in [0.0, -EDGE_MARGIN, EDGE_MARGIN]:
-		var query := PhysicsRayQueryParameters2D.create(Vector2(x + dx, y), Vector2(x + dx, level.size.y + 64.0), GROUND_LAYER)
-		var hit := space.intersect_ray(query)
-		if hit.is_empty():
-			return null
-		if dx == 0.0:
-			point = hit["position"]
-		elif absf(hit["position"].y - point.y) > TILE * 0.75:
-			return null
-	var above := level.char_at(int(point.y / TILE) - 1, int(point.x / TILE))
-	if SKIPPED_ABOVE.contains(above):
-		return null
-	return point
 
 
 func _over_pit(ball: Ball) -> bool:
@@ -536,13 +558,13 @@ func _reattach(instant: bool) -> void:
 		rope.add_bead(t)
 	_stash.clear()
 	rope.cut = false
-	if not instant and apart > rope.max_length - 0.5:
+	rope.free_limit = 0.0
+	if not instant and apart > rope.rest_length + 0.5:
 		if _rope_base.is_empty():
 			_rope_base = {"rest": rope.rest_length, "max": rope.max_length, "stiff": rope.stiffness, "damp": rope.damping}
-		var goal := _rope_base.duplicate()
 		rope.rest_length = maxf(rope.rest_length, apart)
-		rope.max_length = maxf(rope.max_length, apart + 16.0)
-		_rope_to(goal, true)
+		rope.max_length = maxf(rope.max_length, apart + RATCHET_SLACK)
+		_rope_to(_rope_base.duplicate(), true)
 
 
 func _tick_quake(delta: float) -> void:

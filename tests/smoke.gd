@@ -993,7 +993,7 @@ func _brawl_checks() -> void:
 	_expect(spr.scale.y < spr.scale.x * 0.55, "the stomped player is flattened like a pancake (%s)" % spr.scale)
 	_expect(not a.dead and br.scores[1] == 0, "the stomper stays alive and the victim scores nothing")
 	await _frames(70)
-	_expect(not b.dead and b.visible and b.collision_layer == 2 and b.global_position.distance_to(b_spawn) < 40.0, "the victim respawns alive at its own spawn point (%.0f px away)" % b.global_position.distance_to(b_spawn))
+	_expect(not b.dead and b.visible and b.collision_layer == 2 and (b.global_position.distance_to(b_spawn) < 40.0 or a.global_position.distance_to(b.global_position) >= a.radius + b.radius + Brawl.SPAWN_MIN_GAP), "the victim respawns alive at its own spawn point, or at a safe spot when the stomper stands on it (%.0f px away)" % b.global_position.distance_to(b_spawn))
 	_expect(b.invuln > 0.0 and events.size() == 1, "the respawned player is briefly invulnerable and no extra point was given")
 	a.teleport(b.global_position + Vector2(3, -170))
 	await _frames(45)
@@ -1902,7 +1902,7 @@ func _brawl_item_checks() -> void:
 	await _frames(2)
 	br.kill(b, "pit")
 	await _frames(3)
-	_expect(not br.match_running and br.leader == null and a.size_factor == 1.0 and b.size_factor == 1.0 and _count_children(a, Brawl.CrownMarker) == 0 and _count_children(b, Brawl.CrownMarker) == 0, "crown: cleared at match end (both back to normal size)")
+	_expect(not br.match_running and br.leader == a and is_equal_approx(a.size_factor, Brawl.LEADER_SCALE) and b.size_factor == 1.0 and _count_children(a, Brawl.CrownMarker) == 1 and _count_children(b, Brawl.CrownMarker) == 0, "crown: at match end the winner keeps the crown and the big size, the loser is back to normal")
 	br.queue_free()
 	await _frames(2)
 

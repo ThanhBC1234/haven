@@ -550,6 +550,9 @@ func _death_checks() -> void:
 		await _frames(1)
 		if not a.dead:
 			break
+	var resumed_left := ch.piggyback.seconds_left
+	_expect(not a.dead and not b.dead and ch.piggyback.piggyback_active and ch.piggyback.piggyback_rider == a and resumed_left > 8.0 and resumed_left < 9.9, "death: both respawn and the carry resumes with the time that was left (%.2f of 10 s)" % resumed_left)
+	ch.piggyback._end(false)
 	await _frames(5)
 	_expect(not a.dead and not b.dead and not a.carried and not b.jump_locked and not ch.piggyback.piggyback_active, "death: both respawn normally")
 	_expect(a.global_position.distance_to(ch.respawn_points[0]) < 30.0 and b.global_position.distance_to(ch.respawn_points[1]) < 30.0, "death: both are at their respawn spots, the rider was not flung anywhere (%s, %s)" % [str(a.global_position.round()), str(b.global_position.round())])
