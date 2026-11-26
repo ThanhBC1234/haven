@@ -45,6 +45,7 @@ var _saved := {}
 var _ice: IceOverlay = null
 var _bomb: BombMarker = null
 var _pass_cd := 0.0
+var _beep_left := 0.0
 var _swap_tries := 0
 var _swap_wait := 0
 var _swap_velocities: Array[Vector2] = []
@@ -151,6 +152,7 @@ func _begin(id: String) -> void:
 	active_event = id
 	time_left = duration_of(id)
 	_pass_cd = 0.0
+	_beep_left = 0.0
 	if id == "ice_floor":
 		_ice_on()
 	elif id == "hot_potato":
@@ -293,6 +295,7 @@ func _do_swap() -> bool:
 	a.teleport(pos_b + Vector2(0.0, b.radius - a.radius))
 	b.teleport(pos_a + Vector2(0.0, a.radius - b.radius))
 	_swap_wait = 2
+	Sfx.play("item_swap")
 	return true
 
 
@@ -332,6 +335,7 @@ func _tick_potato(delta: float) -> void:
 	_pass_cd = maxf(0.0, _pass_cd - delta)
 	if _bomb != null:
 		_bomb.fuse_left = maxf(0.0, time_left)
+		_beep_fuse(delta)
 	var other := brawl.opponent_of(bomb_carrier)
 	if _pass_cd > 0.0 or bomb_carrier.dead or other.dead or other.invuln > 0.0:
 		return
@@ -344,11 +348,21 @@ func _tick_potato(delta: float) -> void:
 		brawl.hud.flash("%s HAS THE BOMB!" % brawl.player_name(other), 0.8, BrawlHud.PLAYER_COLORS[brawl.balls.find(other)])
 
 
+func _beep_fuse(delta: float) -> void:
+	_beep_left -= delta
+	if _beep_left > 0.0:
+		return
+	var urgency := 1.0 - clampf(_bomb.fuse_left / maxf(_bomb.fuse_total, 0.01), 0.0, 1.0)
+	Sfx.play("fuse", urgency * 6.0)
+	_beep_left = lerpf(1.0, 0.1, urgency * urgency)
+
+
 func _explode_potato() -> void:
 	var carrier := bomb_carrier
 	var pos := carrier.global_position
 	_burst(pos, Color("#ffb020"), 70, 160.0, 520.0, 0.9)
 	_burst(pos, Color("#f7d046"), 40, 100.0, 380.0, 0.7)
+	Sfx.play("explosion")
 	var ring := Ring.new()
 	ring.position = Vector2(pos.x, minf(pos.y, brawl.level.size.y - 24.0))
 	brawl.level.add_child(ring)

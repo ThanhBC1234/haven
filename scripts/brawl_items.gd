@@ -106,6 +106,7 @@ func _tick_boxes() -> void:
 func _pick(box: ItemBox, ball: Ball) -> void:
 	var id := box.item_id
 	_remove_box(box)
+	Sfx.play("item_pick")
 	give(ball, id)
 	item_picked.emit(ball, id)
 
@@ -178,6 +179,7 @@ func _use_banana(ball: Ball, i: int) -> bool:
 		return false
 	_clear_hand(i)
 	_start_banana(target)
+	Sfx.play("item_banana")
 	brawl.hud.flash("BANANA! %s IS DIZZY!" % brawl.player_name(target), 1.0, BrawlHud.PLAYER_COLORS[i])
 	return true
 
@@ -202,6 +204,7 @@ func _use_spring(ball: Ball, i: int) -> bool:
 	trap.owner_ball = ball
 	brawl.level.add_child(trap)
 	traps.append(trap)
+	Sfx.play("item_trap")
 	return true
 
 
@@ -409,6 +412,7 @@ func _tick_traps(delta: float) -> void:
 			if ball.dead or not _trap_touches(trap, ball):
 				continue
 			ball.bounce_up(spring_launch)
+			Sfx.play("spring")
 			_burst(trap.position + Vector2(0.0, -16.0), Color("#e8455a"), 14, 80.0, 260.0, 0.45)
 			_remove_trap(trap, false)
 			trap_sprung.emit(ball)

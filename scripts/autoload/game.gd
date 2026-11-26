@@ -36,6 +36,7 @@ var best_score := 0
 var total_stars := 0
 var endless_stars := 0
 var save_enabled := true
+var sfx_muted := false
 var brawl_vs_bot := false
 var chained_index := 0
 var chained_totals: Array[int] = [0, 0]
@@ -130,7 +131,7 @@ func go_to_menu() -> void:
 	get_tree().change_scene_to_file(MENU_SCENE)
 
 
-func save_progress() -> void:
+func save_progress(path := SAVE_PATH) -> void:
 	if not save_enabled:
 		return
 	var cfg := ConfigFile.new()
@@ -138,13 +139,16 @@ func save_progress() -> void:
 	cfg.set_value("progress", "total_stars", total_stars)
 	cfg.set_value("progress", "endless_stars", endless_stars)
 	cfg.set_value("progress", "best_stars", best_stars)
-	cfg.save(SAVE_PATH)
+	cfg.set_value("settings", "sfx_muted", sfx_muted)
+	cfg.save(path)
 
 
 func load_progress(path := SAVE_PATH) -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(path) != OK:
 		return
+	var muted = cfg.get_value("settings", "sfx_muted", false)
+	sfx_muted = typeof(muted) == TYPE_BOOL and muted
 	var score = cfg.get_value("progress", "best_score", 0)
 	if typeof(score) == TYPE_INT and score >= 0:
 		best_score = score

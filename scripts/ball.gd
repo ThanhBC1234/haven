@@ -74,6 +74,7 @@ var _coyote := 0.0
 var _jump_request := {}
 var _was_on_ground := false
 var _last_vy := 0.0
+var _land_sfx_msec := -1000
 var _teleport_to = null
 var _bounce := 0.0
 var ammo := 0
@@ -157,6 +158,7 @@ func shoot() -> void:
 	b.position = global_position + Vector2(0, -2) + dir * 22.0
 	get_parent().add_child(b)
 	shot.emit()
+	Sfx.play("shoot")
 
 
 func add_ammo(n: int) -> void:
@@ -189,6 +191,8 @@ func _read_input(delta: float) -> void:
 			charge_dir = -1
 		elif right and not left:
 			charge_dir = 1
+		if charge_dir != 0 and not action_prefix.begins_with("bot"):
+			Sfx.play("charge")
 		charge = 0.0
 	if charge_dir != 0:
 		var holding := left if charge_dir < 0 else right
@@ -338,6 +342,7 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 			_tilt_vel += state.linear_velocity.x * 0.02
 			if _last_vy > 40.0:
 				landed.emit(_last_vy)
+				_play_land_sfx(_last_vy)
 	_was_on_ground = on_ground
 	_last_vy = state.linear_velocity.y
 	if dead:
@@ -349,6 +354,7 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		_jump_request = {}
 		_coyote = 0.0
 		launched.emit()
+		Sfx.play("jump")
 
 	if _bounce > 0.0:
 		state.linear_velocity.y = -_bounce
@@ -361,6 +367,18 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		state.linear_velocity += _kick
 		_kick = Vector2.ZERO
 		_coyote = 0.0
+
+
+func _play_land_sfx(speed: float) -> void:
+	var now := Time.get_ticks_msec()
+	if dead or speed < 150.0 or now - _land_sfx_msec < 80:
+		return
+	_land_sfx_msec = now
+	var loud := clampf((speed - 150.0) / 700.0, 0.0, 1.0)
+	if speed > 650.0:
+		Sfx.play("land_hard", lerpf(-8.0, 0.0, loud))
+	else:
+		Sfx.play("bounce", lerpf(-16.0, -4.0, loud))
 
 
 func _update_wobble(delta: float) -> void:
@@ -434,6 +452,7 @@ func take_hit() -> void:
 		has_shield = false
 		invuln = invuln_after_hit
 		shield_changed.emit(false)
+		Sfx.play("shield_break")
 		return
 	hurt.emit()
 

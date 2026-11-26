@@ -187,6 +187,7 @@ func _on_ball_hurt() -> void:
 	hud.set_lives(lives)
 	var respawn := _respawn_point(ball.global_position.x)
 	ball.dead = true
+	Sfx.play("pop")
 	ball.hide()
 	ball.teleport(respawn)
 	if lives <= 0:
@@ -198,6 +199,7 @@ func _on_ball_hurt() -> void:
 	ball.dead = false
 	ball.invuln = 1.5
 	ball.show()
+	Sfx.play("respawn")
 	_busy = false
 
 
@@ -210,6 +212,7 @@ func _respawn_point(x: float) -> Vector2:
 
 func _game_over() -> void:
 	_over = true
+	Sfx.play("lose")
 	var new_best := _record_run()
 	hud.show_game_over(int(score), Game.best_score, new_best, stars, Game.endless_stars)
 

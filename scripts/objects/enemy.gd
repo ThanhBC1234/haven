@@ -63,6 +63,7 @@ func _on_hitbox_body_entered(body: Node2D) -> void:
 
 func squash() -> void:
 	dead = true
+	Sfx.play("stomp")
 	$Shape.set_deferred("disabled", true)
 	hitbox.set_deferred("monitoring", false)
 	var tween := create_tween()

@@ -39,7 +39,7 @@ const HOW_TO_PLAY := [
 		"After it hits a wall it is dizzy. Shoot it, or jump on its head. Every hit = 1 damage."]],
 	["ITEMS", [
 		"Heart: +1 life.   Shield: blocks one hit.   Green arrow: higher jumps for 10 seconds.",
-		"Star: points.   R: back to checkpoint (-1 life).   Esc twice: menu."]],
+		"Star: points.   R: back to checkpoint (-1 life).   Esc twice: menu.   M: mute."]],
 ]
 
 

@@ -55,12 +55,14 @@ func _on_body_entered(body: Node2D) -> void:
 				return
 			used = true
 			level.collect_star(body)
+			Sfx.play("star")
 			queue_free()
 		"checkpoint":
 			if used:
 				return
 			used = true
 			level.reach_checkpoint(global_position + Vector2(0, -16))
+			Sfx.play("checkpoint")
 		"finish":
 			if used:
 				return
@@ -69,6 +71,7 @@ func _on_body_entered(body: Node2D) -> void:
 		"trampoline":
 			body.bounce_up(trampoline_speed)
 			_squash = 1.0
+			Sfx.play("spring")
 		"heart":
 			if used:
 				return
@@ -77,6 +80,7 @@ func _on_body_entered(body: Node2D) -> void:
 				return
 			used = true
 			level.collect_heart()
+			Sfx.play("heart")
 			queue_free()
 		"shield":
 			if used:
@@ -86,18 +90,21 @@ func _on_body_entered(body: Node2D) -> void:
 				return
 			used = true
 			body.give_shield()
+			Sfx.play("shield")
 			queue_free()
 		"jump_boost":
 			if used:
 				return
 			used = true
 			body.give_jump_boost()
+			Sfx.play("boost")
 			queue_free()
 		"gun":
 			if used:
 				return
 			used = true
 			body.add_ammo(gun_ammo)
+			Sfx.play("gun_pick")
 			hide()
 			await get_tree().create_timer(respawn_time).timeout
 			if is_inside_tree():

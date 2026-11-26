@@ -20,6 +20,7 @@ func _refresh() -> void:
 	if now == pressed:
 		return
 	pressed = now
+	Sfx.play("button_on" if now else "button_off")
 	var level := Level.of(self)
 	if level:
 		level.set_button(channel, self, pressed)

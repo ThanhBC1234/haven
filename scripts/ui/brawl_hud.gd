@@ -45,6 +45,7 @@ var _event_time := 0.0
 var _event_seconds := 1.0
 var _roulette_ticks: Array = []
 var _roulette_total := 0.0
+var _roulette_sfx := 0
 
 
 func setup(target_score: int, with_bot := false) -> void:
@@ -166,6 +167,7 @@ func show_event_roulette(names: Array, chosen: String, seconds := 2.0, color := 
 	_event_time = 0.0
 	_event_color = color
 	event_state = "roulette"
+	_roulette_sfx = 0
 	event_text = _roulette_ticks[0][1]
 	queue_redraw()
 
@@ -193,9 +195,14 @@ func _process(delta: float) -> void:
 	if event_state != "":
 		_event_time += delta
 		if event_state == "roulette":
+			var passed := 0
 			for tick in _roulette_ticks:
 				if tick[0] <= _event_time:
 					event_text = tick[1]
+					passed += 1
+			if passed > _roulette_sfx:
+				_roulette_sfx = passed
+				Sfx.play("roulette_stop" if passed >= _roulette_ticks.size() else "tick")
 		else:
 			event_fraction = clampf(1.0 - _event_time / _event_seconds, 0.0, 1.0)
 		changed = true
