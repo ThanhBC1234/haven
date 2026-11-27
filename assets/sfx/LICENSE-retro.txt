@@ -1,0 +1,9 @@
+Sound effects in this folder come from:
+
+  "The Essential Retro Video Game Sound Effects Collection [512 sounds]"
+  Author: Juhani Junkala
+  Source: https://opengameart.org/content/512-sound-effects-8-bit-style
+  License: CC0 1.0 Universal (public domain dedication), https://creativecommons.org/publicdomain/zero/1.0/
+
+The files here are trimmed, level-normalised and converted from .wav to .ogg.
+No attribution is required, but credit is appreciated.

@@ -24,6 +24,7 @@ func _on_channel_changed(ch: String, on: bool) -> void:
 	if ch != channel:
 		return
 	is_open = on
+	Sfx.play("door_open" if on else "door_close")
 	$Shape.set_deferred("disabled", on)
 	queue_redraw()
 

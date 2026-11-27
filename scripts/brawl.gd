@@ -271,6 +271,9 @@ func kill(victim: Ball, cause: String) -> void:
 	var scorer := opponent_of(victim)
 	var si := balls.find(scorer)
 	victim.dead = true
+	if cause == "stomp":
+		Sfx.play("stomp")
+	Sfx.play("point")
 	scores[si] += 1
 	hud.set_score(scorer.player_id, scores[si])
 	_reset_stall()
@@ -323,6 +326,7 @@ func _point_text(scorer: Ball, victim: Ball, cause: String) -> String:
 func _end_match(scorer: Ball) -> void:
 	scorer.dead = true
 	match_over.emit(scorer)
+	Sfx.play("win_match")
 	await get_tree().create_timer(win_panel_delay).timeout
 	if not is_inside_tree():
 		return
@@ -337,6 +341,7 @@ func _death_sequence(victim: Ball, cause: String, respawn: bool) -> void:
 		if not is_inside_tree():
 			return
 	_pop_effect(victim.global_position, BrawlHud.PLAYER_COLORS[idx])
+	Sfx.play("pop")
 	victim.hide()
 	victim.collision_layer = 0
 	victim.teleport(spawn_points[idx])
@@ -409,6 +414,7 @@ func _respawn(ball: Ball) -> void:
 	ball.teleport(spot + Vector2(0.0, base_radius - ball.radius))
 	ball.collision_layer = BALL_LAYER
 	ball.show()
+	Sfx.play("respawn")
 	ball.invuln = RESPAWN_INVULN
 	if sudden_death_active and _sd_y < ball.global_position.y + ball.radius + sudden_death_speed * (RESPAWN_INVULN + 1.0):
 		_sd_y = level.size.y
@@ -552,6 +558,7 @@ func _update_stall(delta: float) -> void:
 		stall_active = true
 		_stall_next = stall_warning
 		hud.flash("NO POINTS - SPIKES!", 1.4, Color("#ffb020"))
+		Sfx.play("warn")
 		for side in [_stall_left, _stall_right]:
 			if not side.is_empty():
 				_add_stall_mark(side[0])
@@ -625,6 +632,7 @@ func _start_sudden_death() -> void:
 	level.add_child(_sd_row)
 	_place_hazard_row()
 	hud.flash("SUDDEN DEATH!", 1.6, Color("#ff4040"))
+	Sfx.play("warn")
 
 
 func _place_hazard_row() -> void:

@@ -194,6 +194,7 @@ func _update_anchors(delta: float) -> void:
 			_enter_anchor(i, ball)
 		elif not want and _anchored[i]:
 			_exit_anchor(i)
+			Sfx.play("anchor_off")
 		if _anchored[i]:
 			ball.knockback(Vector2(-ball.linear_velocity.x * minf(1.0, ANCHOR_BRAKE * delta), 0.0))
 
@@ -207,6 +208,7 @@ func _enter_anchor(i: int, ball: Ball) -> void:
 	mat.bounce = 0.0
 	ball.physics_material_override = mat
 	ball.mass = _saved_mass[i] * ANCHOR_MASS_SCALE
+	Sfx.play("anchor_on")
 
 
 func _exit_anchor(i: int) -> void:
@@ -231,6 +233,7 @@ func add_bead(t := 0.5) -> Bead:
 	beads.append(bead)
 	_separate()
 	bead_added.emit()
+	Sfx.play("rope_star")
 	return bead
 
 

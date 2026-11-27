@@ -87,7 +87,7 @@ func setup(level_name: String, lives: int, star_total: int) -> void:
 	_hint.add_theme_font_size_override("font_size", UiTheme.FONT_SMALL)
 	_hint.add_theme_color_override("font_color", UiTheme.DIM)
 	add_child(_hint)
-	set_hint("R: back to checkpoint (-1 life)   Esc twice: menu")
+	set_hint("R: back to checkpoint (-1 life)   Esc twice: menu   M: mute")
 	if Game.level_index == 0:
 		_show_controls_tip()
 

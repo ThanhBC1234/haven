@@ -97,6 +97,7 @@ func start_piggyback(rider: Ball, carrier: Ball, seconds := DEFAULT_SECONDS) -> 
 	_make_banner()
 	set_process(true)
 	piggyback_started.emit()
+	Sfx.play("item_swap")
 
 
 func stop_piggyback() -> void:
