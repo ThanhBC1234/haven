@@ -422,6 +422,18 @@ func _trap_touches(trap: SpringTrap, ball: Ball) -> bool:
 	return c.distance_to(nearest) <= ball.radius
 
 
+func trap_near(trap: SpringTrap, pos: Vector2, reach: float) -> bool:
+	var area := Rect2(trap.position + Vector2(-TRAP_HALF_WIDTH, -TRAP_HEIGHT), Vector2(TRAP_HALF_WIDTH * 2.0, TRAP_HEIGHT))
+	var nearest := Vector2(clampf(pos.x, area.position.x, area.end.x), clampf(pos.y, area.position.y, area.end.y))
+	return pos.distance_to(nearest) <= reach
+
+
+func clear_traps_near(pos: Vector2, reach: float) -> void:
+	for trap in traps.duplicate():
+		if is_instance_valid(trap) and trap_near(trap, pos, reach):
+			_remove_trap(trap)
+
+
 func _remove_trap(trap: SpringTrap, fx := true) -> void:
 	traps.erase(trap)
 	if not is_instance_valid(trap):

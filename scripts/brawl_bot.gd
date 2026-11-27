@@ -6,7 +6,7 @@ const FRAME := 1.0 / 60.0
 const TILE := 32.0
 const CANDIDATE_CHARGES := [0.0, 0.12, 0.25, 0.38, 0.5, 0.62, 0.75, 0.88, 1.0]
 const EVALS_PER_FRAME := 4
-const MAX_SIM_STEPS := 140
+const MAX_SIM_STEPS := 180
 const WAIT_HORIZON := 0.9
 const LAND_LEAD := 0.0
 const SPIKE_H := 10.0
@@ -16,21 +16,27 @@ const FALL_Y := 660.0
 const CEILING_Y := -16.0
 const ICE_SLIDE := 0.8
 const TRAP_SIZE := Vector2(40.0, 30.0)
-const GRAPH_CHARGES := [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0]
+const GRAPH_CHARGE_STRIDE := 2
 const GRAPH_NODES_PER_FRAME := 1
 const TICK_BUDGET_USEC := 800
 const SLIDE_DECEL := 1260.0
 const BOUNCE := 0.55
 const FRICTION_CUT := 1.4
 const CAREFUL_SCALE := 0.3
-const RELAX_AFTER := 2.5
+const RELAX_AFTER := 1.2
 const LAUNCH_CHECK_ERR := 0.05
-const CHECK_LEAD := 16
+const LAUNCH_CHECK_MIN_ERR := 0.02
+const PREP_CHECK_WAIT := 30
+const CHECK_DRIFT := 20.0
+const ABORT_COMMIT := 3
+const CHECK_LEAD := 24
 const THIN_SKIN := -4.0
 const THIN_DIVERGE := 24.0
 const VETO_SECONDS := 1.5
 const ALIGN_FRAMES := 5
 const SETTLE_MAX := 40
+const PREP_STALE_FRAMES := 20
+const MAX_PLAN_DELAY := 1.2
 const REST_SPEED := 110.0
 const AIR_FIRE_FRAMES := 8
 const SAFETY_SKIN := 4.0
@@ -41,8 +47,35 @@ const HIT_LAND := 1
 const HIT_BUMP := 2
 const HAZARD_PAD := 12.0
 const HIGH_WEIGHT := 1.0
+const SPRING_SPEED := 920.0
+const SPRING_AREA := Rect2(4.0, 4.0, 24.0, 28.0)
+const INTRO_GRAPH_USEC := 4000
+const EDGE_CANDIDATES := 2
+const EDGE_REFINE := [0, -1, 1]
+const STOMP_RANGE := 240.0
+const STOMP_REWARD := 1500.0
+const STOMP_SIGMA_SCALE := 0.3
+const REFINE_GAP := 20.0
+const REFINE_MAX := 8
+const STOMP_MISS := 18.0
+const STALL_LOOKAHEAD := 5.0
+const MAX_CHECKS := 10
+const STILL_LIMIT := 1.5
+const STILL_FORCE := 3.5
+const DESPERATE_AFTER := 10.0
+const BOMB_HURRY := 8.0
+const DEADLY_MARGIN := 20.0
+const BOX_SPIKE_GAP := 44.0
+const AFTER_WAIT_MARGIN := 160.0
+const REACT_RANGE := 140.0
+const REACT_DELAY := 0.12
+const REACT_COOLDOWN := 0.7
+const UNDER_FOE := 45.0
+const STALL_FLOOR_COST := 150.0
 
 static var tick_budget_usec := TICK_BUDGET_USEC
+static var _graph_cache := {}
+static var use_prebuilt := true
 
 @export var skill := 0.6
 
@@ -57,10 +90,15 @@ var hops := 0
 var items_used := 0
 var last_jump := ""
 var _since_hop := 0.0
+var _since_progress := 0.0
+var _progress_hops := 999
+var _cur_hops := 999
+var _progress_dist := INF
 var _extra_skin := 0.0
 var timing_reason := ""
 var timing_aborts := 0
 var aborts := 0
+var abort_reason := ""
 var thoughts := 0
 var last_choice := ""
 var predicted_end := Vector2.ZERO
@@ -75,12 +113,14 @@ var _rows := 0
 var _nodes: Array[Vector2] = []
 var _node_at := PackedInt32Array()
 var _redges: Array = []
+var _edges: Array = []
 var _graph_todo: Array[int] = []
 var _graph_ctx := {}
 var _graph_node := -1
 var _graph_cands: Array = []
 var _graph_job: EvalJob = null
 var _graph_next := 0
+var _graph_outs: Array = []
 var last_tick_usec := 0
 var _deadline := -1
 var _graph_ticks := 0
@@ -89,13 +129,18 @@ var _graph_done := false
 var _graph_usable := false
 var _gdist := PackedInt32Array()
 var _goal_node := -1
+var _goal_src := -1
+var _goal_from := -1
 var _haz := PackedByteArray()
 var _dyn_spikes: Array[Rect2] = []
+var _soon_spikes: Array[Rect2] = []
 var _traps: Array[Rect2] = []
 var _gravity := 1400.0
 var _damp := 0.1
 var _clock := 0.0
 var _history: Array = []
+var _foe_reactive := 0.0
+var _foe_was_ground := true
 var _think_cd := 0.3
 var _queue: Array = []
 var _results: Array = []
@@ -106,13 +151,21 @@ var _lc_job: EvalJob = null
 var _ch_ranked: Array = []
 var _ch_i := 0
 var _ch_checks := 0
+var _ch_wait_seen := false
+var _ch_wait_score := 0.0
 var _ch_amounts: Array = []
 var _thick_end := Vector2.ZERO
+var _thick_edge := false
 var _ch_thin := false
 var _ch_k := 0
 var _ch_best: Dictionary = {}
 var _ch_strict := true
 var _ch_sigma := 0.0
+var _ch_err := 0.0
+var _plan_err := 0.0
+var _prep_hold := 0
+var _abort_streak := 0
+var _refined := false
 var _plan_charge := 0.0
 var _veto_dir := 0
 var _veto_charge := 0.0
@@ -121,6 +174,7 @@ var _plan_strict := true
 var _aligned := false
 var _lc_state := 0
 var _lc_lead := 0.0
+var _lc_from_x := 0.0
 var _lc_dir := 0
 var _lc_amounts: Array = []
 var _lc_thin := false
@@ -163,6 +217,7 @@ func _ready() -> void:
 	_damp = float(ProjectSettings.get_setting("physics/2d/default_linear_damp", 0.1))
 	_build_map()
 	_build_nodes()
+	_load_cached_graph()
 	ball.launched.connect(_on_launched)
 	brawl.point_scored.connect(_on_point_scored)
 	brawl.match_over.connect(_on_match_over)
@@ -221,6 +276,7 @@ func _stop_all() -> void:
 	_lc_job = null
 	_lc_state = 0
 	_think_cd = 0.25
+	_abort_streak = 0
 
 
 func _physics_process(delta: float) -> void:
@@ -228,6 +284,8 @@ func _physics_process(delta: float) -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	_deadline = t0 + tick_budget_usec if tick_budget_usec >= 0 else -1
+	if not _graph_done and tick_budget_usec >= 0 and brawl.match_running:
+		_graph_step(tick_budget_usec / 2)
 	_play(delta)
 	if not _graph_done:
 		var used := Time.get_ticks_usec() - t0
@@ -236,7 +294,7 @@ func _physics_process(delta: float) -> void:
 			if brawl.match_running:
 				left = clampi(tick_budget_usec - used, 0, tick_budget_usec / 2)
 			else:
-				left = maxi(0, tick_budget_usec * 2 - used)
+				left = maxi(0, maxi(INTRO_GRAPH_USEC, tick_budget_usec * 2) - used)
 		_graph_step(left)
 	last_tick_usec = Time.get_ticks_usec() - t0
 
@@ -254,6 +312,7 @@ func _play(delta: float) -> void:
 	_clock += delta
 	_held_time += delta
 	_since_hop += delta
+	_since_progress += delta
 	_gun_cd = maxf(0.0, _gun_cd - delta)
 	_lure_time = maxf(0.0, _lure_time - delta)
 	_record_foe()
@@ -274,9 +333,16 @@ func _play(delta: float) -> void:
 			_launch_step()
 		"prep":
 			_delay_frames -= 1
+			if _delay_frames > PREP_STALE_FRAMES and ball.on_ground and absf(ball.linear_velocity.y) < REST_SPEED:
+				timing_aborts += 1
+				timing_reason = "stale_prep"
+				_cancel_jump()
+				return
 			if _delay_frames <= 0 and _plan_dir != 0 and not _aligned:
 				_aligned = true
 				var wait := _align_wait()
+				if wait < 0 and _abort_streak >= ABORT_COMMIT:
+					wait = 0
 				if wait < 0:
 					timing_aborts += 1
 					timing_reason = "no_align"
@@ -286,6 +352,9 @@ func _play(delta: float) -> void:
 			if _plan_dir != 0 and not _early_check(maxi(_delay_frames, 0) + _hold_frames):
 				return
 			if _delay_frames <= 0:
+				if _plan_dir != 0 and _lc_state == 1 and _prep_hold < PREP_CHECK_WAIT and ball.on_ground and absf(ball.linear_velocity.y) < REST_SPEED:
+					_prep_hold += 1
+					return
 				phase = "charge"
 				_start_charge()
 		"charge":
@@ -315,6 +384,9 @@ func _on_launched() -> void:
 
 
 func _on_point_scored(scorer: Ball, victim: Ball, _cause: String) -> void:
+	_since_progress = 0.0
+	_progress_hops = 999
+	_progress_dist = INF
 	if victim == ball:
 		_stop_all()
 	elif scorer == ball:
@@ -335,6 +407,18 @@ func _record_foe() -> void:
 	_history.append([_clock, foe.global_position, foe.linear_velocity])
 	while _history.size() > 1 and _history[1][0] <= _clock - _reaction():
 		_history.pop_front()
+	_learn_foe(FRAME)
+
+
+func _learn_foe(delta: float) -> void:
+	var near := not foe.dead and not ball.dead and absf(ball.global_position.x - foe.global_position.x) < REACT_RANGE + 20.0 and ball.global_position.y < foe.global_position.y + 40.0
+	var apart := ball.global_position.distance_to(foe.global_position) > ball.radius + foe.radius + 6.0
+	var hopped := _foe_was_ground and not foe.on_ground and foe.linear_velocity.y < -450.0 and absf(foe.linear_velocity.x) < 150.0 and apart
+	_foe_was_ground = foe.on_ground
+	if near and hopped:
+		_foe_reactive = minf(1.0, _foe_reactive + 0.4)
+	elif near and foe.on_ground:
+		_foe_reactive = maxf(0.0, _foe_reactive - 0.25 * delta)
 
 
 func _foe_view() -> Array:
@@ -434,7 +518,7 @@ func _danger_at(p: Vector2, rad: float) -> int:
 				var x := c * TILE
 				var y := r * TILE
 				if kind == 2:
-					if _circle_hits(p, rad, Rect2(x, y, TILE, TILE)):
+					if _circle_hits(p, rad, Rect2(Vector2(x, y) + SPRING_AREA.position, SPRING_AREA.size)):
 						mask |= 2
 				elif _circle_hits(p, rad + SPIKE_PAD, Rect2(x + (TILE - SPIKE_W) / 2.0, y + TILE - SPIKE_H if kind == 1 else y, SPIKE_W, SPIKE_H)):
 					return 1
@@ -454,6 +538,15 @@ func _ground_ok(x: float, y: float, rad: float) -> bool:
 	return (_danger_at(Vector2(x, y), rad + 4.0) & 1) == 0
 
 
+func _ground_y_below(x: float, y: float, rad: float) -> float:
+	var c := floori(x / TILE)
+	var r0 := floori((y + rad + 2.0) / TILE)
+	for r in range(r0, r0 + 4):
+		if _is_solid(r, c):
+			return r * TILE - rad
+	return INF
+
+
 func _line_clear(a: Vector2, b: Vector2) -> bool:
 	var steps := int(a.distance_to(b) / 16.0)
 	for i in range(1, steps):
@@ -461,6 +554,58 @@ func _line_clear(a: Vector2, b: Vector2) -> bool:
 		if _is_solid(floori(p.y / TILE), floori(p.x / TILE)):
 			return false
 	return true
+
+
+func _graph_key() -> String:
+	return "%s|%d|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f|%.1f" % [brawl.arena_name, str(brawl.level.rows).hash(), _base_radius, ball.min_speed, ball.max_speed,
+		ball.min_tilt_deg, ball.max_tilt_deg, ball.charge_time, _gravity, _damp * 100.0]
+
+
+func _charge_steps() -> int:
+	return maxi(1, roundi(ball.charge_time * 60.0))
+
+
+func _load_cached_graph() -> bool:
+	var key := _graph_key()
+	var packed: Array = _graph_cache.get(key, [])
+	if packed.is_empty() and use_prebuilt:
+		packed = BrawlGraphs.GRAPHS.get(key, [])
+	if packed.size() != _nodes.size():
+		return false
+	_unpack_graph(packed)
+	_graph_todo.clear()
+	_graph_done = true
+	return true
+
+
+func _store_graph() -> void:
+	_graph_cache[_graph_key()] = pack_graph()
+
+
+func pack_graph() -> Array:
+	var steps := _charge_steps()
+	var out: Array = []
+	for i in _nodes.size():
+		var row: Array = []
+		for e in _edges[i]:
+			row.append(int(e[0]) * 1000 + (int(e[1]) + 1) * 100 + roundi(float(e[2]) * steps))
+		out.append(row)
+	return out
+
+
+func _unpack_graph(packed: Array) -> void:
+	var steps := _charge_steps()
+	for i in _nodes.size():
+		_edges[i] = []
+		_redges[i] = []
+	for i in _nodes.size():
+		for code in packed[i]:
+			var j: int = int(code) / 1000
+			var dir: int = (int(code) / 100) % 10 - 1
+			var amount := float(int(code) % 100) / steps
+			_edges[i].append([j, dir, amount])
+			if not _redges[j].has(i):
+				_redges[j].append(i)
 
 
 func _build_nodes() -> void:
@@ -476,6 +621,7 @@ func _build_nodes() -> void:
 			_nodes.append(Vector2((c + 0.5) * TILE, r * TILE - base_radius))
 	for i in _nodes.size():
 		_redges.append([])
+		_edges.append([])
 		_graph_todo.append(i)
 	_graph_ctx = {"me_pos": Vector2.ZERO, "me_vel": Vector2.ZERO, "g_me": _gravity, "foe_pos": Vector2.ZERO, "foe_vel": Vector2.ZERO,
 		"g_foe": _gravity, "foe_on": false, "foe_invuln": 0.0, "my_invuln": 0.0, "ice": false, "box_pos": Vector2.INF, "t_contact": 0.0, "margin": 0.0,
@@ -499,16 +645,20 @@ func _graph_step(budget_usec: int) -> void:
 			if not _graph_run_one(until) or Time.get_ticks_usec() >= until:
 				break
 	_graph_done = _graph_node < 0 and _graph_job == null and _graph_todo.is_empty()
+	if _graph_done:
+		_store_graph()
 
 
 func _graph_begin_node(i: int) -> void:
 	_graph_node = i
 	_graph_ctx["me_pos"] = _nodes[i]
 	_graph_cands = [[0, 0.5]]
+	var steps := _charge_steps()
 	for dir in [-1, 1]:
-		for amount in GRAPH_CHARGES:
-			_graph_cands.append([dir, amount])
+		for n in range(0, steps + 1, GRAPH_CHARGE_STRIDE):
+			_graph_cands.append([dir, float(n) / steps])
 	_graph_next = 0
+	_graph_outs = []
 
 
 func _graph_run_one(until_usec: int) -> bool:
@@ -521,16 +671,31 @@ func _graph_run_one(until_usec: int) -> bool:
 		return false
 	var res := _graph_job.res
 	_graph_job = null
-	var i := _graph_node
+	var j := -2 if res["dead"] or not res["landed"] or (res["spring"] and res["bonk"]) else _node_index_at(res["end"], _base_radius)
+	_graph_outs.append(j)
 	_graph_next += 1
 	if _graph_next >= _graph_cands.size():
+		_graph_finish_node(_graph_node)
 		_graph_node = -1
-	if res["dead"] or not res["landed"] or res["spring"]:
-		return true
-	var j := _node_index_at(res["end"], _base_radius)
-	if j >= 0 and j != i and not _redges[j].has(i):
-		_redges[j].append(i)
 	return true
+
+
+func _graph_finish_node(i: int) -> void:
+	for k in _graph_cands.size():
+		var j: int = _graph_outs[k]
+		if j < 0 or j == i:
+			continue
+		var cand: Array = _graph_cands[k]
+		if cand[0] != 0:
+			var fragile := false
+			for nk in [k - 1, k + 1]:
+				if nk >= 1 and nk < _graph_cands.size() and _graph_cands[nk][0] == cand[0] and _graph_outs[nk] < 0:
+					fragile = true
+			if fragile:
+				continue
+		if not _redges[j].has(i):
+			_redges[j].append(i)
+		_edges[i].append([j, cand[0], cand[1]])
 
 
 func _node_index_at(p: Vector2, rad := -1.0) -> int:
@@ -571,6 +736,26 @@ func _high_goal() -> int:
 		if mine < 0 or _goal_hops(g)[mine] < 999:
 			return g
 	return mine
+
+
+func _nearest_reachable(from: int, pos: Vector2) -> int:
+	var seen := {from: true}
+	var queue: Array[int] = [from]
+	var best := from
+	var best_d := _nodes[from].distance_to(pos)
+	while not queue.is_empty():
+		var n: int = queue.pop_front()
+		for e in _edges[n]:
+			var j: int = e[0]
+			if seen.has(j):
+				continue
+			seen[j] = true
+			queue.append(j)
+			var d := _nodes[j].distance_to(pos)
+			if d < best_d:
+				best_d = d
+				best = j
+	return best
 
 
 func _goal_hops(goal: int) -> PackedInt32Array:
@@ -691,6 +876,10 @@ class EvalJob extends RefCounted:
 	var min_gap := 9999.0
 	var step := 0
 	var finished := false
+	var in_spring := false
+	var springs := 0
+	var foe_gone := false
+	var foe_hop_t := -1.0
 
 
 func _eval_begin(dir: int, charge: float, immediate := false, ctx := {}, skin := 0.0, isolate := false, min_launch := 0.0) -> EvalJob:
@@ -710,7 +899,7 @@ func _eval_begin(dir: int, charge: float, immediate := false, ctx := {}, skin :=
 	var hold_s := 0.0 if (wait or dir == 0 or immediate) else charge * ball.charge_time
 	var launch_at := 0.0 if wait else maxf(maxf(hold_s + FRAME, float(c["t_contact"]) - LAND_LEAD), min_launch)
 	var res := {"dead": false, "stomp_opp": -1.0, "stomp_me": -1.0, "bump": false, "min_gap": 9999.0, "box": false,
-		"trap": false, "spring": false, "edge": false, "bonk": false, "landed": false, "end": me.pos, "end_opp": op.pos, "t_end": 0.0, "delay": launch_at - hold_s}
+		"trap": false, "spring": false, "edge": false, "edge_deadly": false, "soon": false, "bonk": false, "landed": false, "end": me.pos, "end_opp": op.pos, "t_end": 0.0, "delay": launch_at - hold_s}
 	var job := EvalJob.new()
 	job.dir = dir
 	job.charge = charge
@@ -748,6 +937,8 @@ func _eval_run(job: EvalJob, until_usec: int) -> bool:
 	var g_me: float = c["g_me"]
 	var g_foe: float = c["g_foe"]
 	var foe_on: bool = c["foe_on"]
+	var reactive: bool = c.get("foe_reactive", false)
+	var foe_hop: Vector2 = c.get("foe_hop", Vector2.ZERO)
 	var hazard_y: float = float(c.get("hazard", INF))
 	var sd_speed: float = brawl.sudden_death_speed
 	var has_hazard := hazard_y != INF
@@ -781,6 +972,13 @@ func _eval_run(job: EvalJob, until_usec: int) -> bool:
 				res["landed"] = true
 			elif hit == HIT_BUMP:
 				res["bonk"] = true
+		if foe_on and job.foe_gone:
+			foe_on = false
+		if foe_on and not op.air and reactive and (job.foe_hop_t < 0.0 or t - job.foe_hop_t >= REACT_COOLDOWN) and t >= REACT_DELAY and absf(me.pos.x - op.pos.x) < REACT_RANGE and me.pos.y < op.pos.y + 40.0:
+			op.vel = foe_hop
+			op.pos.y -= 1.0
+			op.air = true
+			job.foe_hop_t = t
 		if foe_on and op.air:
 			_advance(op, g_foe)
 		var danger := _danger_at(me.pos, me.rad)
@@ -789,8 +987,19 @@ func _eval_run(job: EvalJob, until_usec: int) -> bool:
 		if danger & 1 != 0:
 			res["dead"] = true
 			break
-		if danger & 2 != 0:
+		var in_spring := danger & 2 != 0
+		if in_spring and not job.in_spring:
 			res["spring"] = true
+			job.springs += 1
+			if job.springs > 2:
+				job.in_spring = true
+				break
+			me.vel.y = -SPRING_SPEED
+			me.air = true
+			if launched:
+				landed = false
+				res["landed"] = false
+		job.in_spring = in_spring
 		if danger & 4 != 0:
 			res["trap"] = true
 		if box_on and me.pos.distance_to(box_pos) <= box_reach:
@@ -803,9 +1012,13 @@ func _eval_run(job: EvalJob, until_usec: int) -> bool:
 			if gap <= 1.0:
 				var above := -d.y / dist
 				if above > 0.6 and me.air and me.vel.y >= ball.stomp_speed:
-					if float(c["foe_invuln"]) <= t:
-						res["stomp_opp"] = t
-					break
+					if float(c["foe_invuln"]) > t:
+						break
+					res["stomp_opp"] = t
+					me.vel.y = -ball.stomp_bounce
+					job.foe_gone = true
+					foe_on = false
+					continue
 				elif above < -0.6 and op.air and op.vel.y >= foe.stomp_speed:
 					if float(c["my_invuln"]) <= t:
 						res["stomp_me"] = t
@@ -837,6 +1050,10 @@ func _eval_run(job: EvalJob, until_usec: int) -> bool:
 	res["t_end"] = t
 	res["end"] = me.pos
 	res["end_opp"] = op.pos
+	if not res["dead"] and (landed or wait) and not job.isolate:
+		for s in _soon_spikes:
+			if _circle_hits(me.pos, me.rad, s):
+				res["soon"] = true
 	if landed and not res["dead"]:
 		var end: Vector2 = me.pos
 		if c["ice"]:
@@ -847,9 +1064,14 @@ func _eval_run(job: EvalJob, until_usec: int) -> bool:
 			end.x = clampf(end.x + slide, 48.0, _cols * TILE - 48.0)
 			res["end"] = end
 		var m: float = c["margin"]
+		var gy := _ground_y_below(end.x, end.y, me.rad)
 		for off in [-m, 0.0, m]:
-			if not _ground_ok(end.x + off, end.y, me.rad):
+			if not gy < INF or not _ground_ok(end.x + off, gy, me.rad):
 				res["edge"] = true
+		for off in [-DEADLY_MARGIN, 0.0, DEADLY_MARGIN]:
+			var below := _ground_y_below(end.x + off, gy, me.rad) if gy < INF else INF
+			if not below < INF or (_danger_at(Vector2(end.x + off, below), me.rad + 4.0) & 1) != 0:
+				res["edge_deadly"] = true
 	job.finished = true
 	_extra_skin = keep_skin
 	_dyn_spikes = keep_spikes
@@ -874,37 +1096,48 @@ func _score(res: Dictionary) -> float:
 	var e: Vector2 = res["end"]
 	var o: Vector2 = res["end_opp"]
 	var bold: bool = brawl.stall_active
+	if brawl.stall_active and not brawl.sudden_death_active and e.y > (brawl.floor_row() + 1) * TILE - 40.0:
+		s -= STALL_FLOOR_COST
 	if brawl.sudden_death_active:
 		s -= HIGH_WEIGHT * e.y
 	if res["stomp_opp"] >= 0.0:
-		s += (750.0 if bold else 500.0) - 30.0 * res["stomp_opp"]
+		s += STOMP_REWARD * (1.2 if bold else 1.0) - 30.0 * res["stomp_opp"]
 	if res["stomp_me"] >= 0.0:
 		s -= 180.0 if bold else 450.0
+	elif _ctx.get("foe_reactive", false) and res["stomp_opp"] < 0.0 and absf(e.x - o.x) < UNDER_FOE and e.y > o.y - 40.0:
+		s -= 300.0
 	if res["trap"]:
 		s -= 350.0
 	if res["spring"]:
-		s -= 400.0
+		s -= 40.0
+	if res["edge_deadly"]:
+		s -= 150.0
+	if res["soon"]:
+		s -= 500.0
 	if res["edge"]:
-		s -= 120.0
+		s -= 60.0
 	if res["bonk"]:
 		s -= 100.0
 	if res["box"] and brawl.items.held[player_index] == "":
 		s += 260.0 if mode == "get_box" else 120.0
+	if res["stomp_opp"] >= 0.0 and mode != "flee":
+		return s
 	match mode:
 		"flee":
-			s += minf(e.distance_to(o), 520.0)
+			s += minf(_path_cost(e, e.distance_to(o)), 700.0)
 			s -= 150.0 * clampf((110.0 - minf(e.x, _cols * TILE - e.x)) / 110.0, 0.0, 1.0)
 			if res["bump"] or res["min_gap"] <= 3.0:
 				s -= 250.0
 		"pass_bomb":
-			s -= e.distance_to(o)
+			s -= _path_cost(e, e.distance_to(o))
 			if res["bump"] or res["min_gap"] <= 3.0:
 				s += 350.0
 		"get_box":
 			s -= _path_cost(e, e.distance_to(_box_pos))
 		_:
 			var dy := e.y - o.y
-			s -= _path_cost(e, 0.7 * absf(absf(e.x - o.x) - 80.0) + 0.9 * (absf(dy) + maxf(dy, 0.0)))
+			var gap := 170.0 if _ctx.get("foe_reactive", false) else 80.0
+			s -= _path_cost(e, 0.7 * absf(absf(e.x - o.x) - gap) + 0.9 * (absf(dy) + maxf(dy, 0.0)))
 	return s
 
 
@@ -923,23 +1156,138 @@ func _begin_think() -> void:
 	mode = _pick_mode(foe_pos)
 	_ctx["box_pos"] = _box_pos if mode == "get_box" or brawl.items.held[player_index] == "" else Vector2.INF
 	_graph_usable = false
-	if _graph_done and (mode == "chase" or mode == "get_box"):
+	_cur_hops = 999
+	if _graph_done:
 		var goal_pos: Vector2 = _box_pos if mode == "get_box" else foe_pos
-		var g := _high_goal() if brawl.sudden_death_active else _node_below(goal_pos)
+		if mode == "pass_bomb":
+			goal_pos = foe_pos + (_ctx["foe_vel"] as Vector2).limit_length(400.0) * 0.5
+		var g := _high_goal() if brawl.sudden_death_active and (mode == "chase" or mode == "get_box") else _node_below(goal_pos)
+		var mine := _node_below(ball.global_position)
 		if g >= 0:
-			if g != _goal_node:
+			if g != _goal_src or mine != _goal_from:
+				_goal_src = g
+				_goal_from = mine
 				_goal_node = g
 				_gdist = _goal_hops(g)
+				if mine >= 0 and _gdist[mine] >= 999:
+					var alt := _nearest_reachable(mine, goal_pos)
+					if alt >= 0 and alt != g:
+						_goal_node = alt
+						_gdist = _goal_hops(alt)
 			_graph_usable = true
-	_queue =[[0, -1.0], [0, 0.5]]
+			if mine >= 0:
+				_cur_hops = _gdist[mine]
+	_track_progress(foe_pos)
+	_queue = [[0, -1.0], [0, 0.5]]
 	for dir in [-1, 1]:
 		for amount in CANDIDATE_CHARGES:
 			_queue.append([dir, amount])
+	for cand in _edge_candidates():
+		_add_candidate(cand)
+	for cand in _stomp_candidates():
+		_add_candidate(cand)
 	_results.clear()
 	_think_job = null
 	_think_frames = 0
+	_refined = false
 	phase = "think"
 	thoughts += 1
+
+
+func _track_progress(foe_pos: Vector2) -> void:
+	if _graph_usable and _cur_hops < 999:
+		if _cur_hops < _progress_hops:
+			_since_progress = 0.0
+		_progress_hops = _cur_hops
+		return
+	var d := ball.global_position.distance_to(foe_pos)
+	if d < _progress_dist - 48.0:
+		_since_progress = 0.0
+		_progress_dist = d
+
+
+func _add_candidate(cand: Array) -> void:
+	for q in _queue:
+		if q[0] == cand[0] and absf(float(q[1]) - float(cand[1])) < 0.01:
+			return
+	_queue.append(cand)
+
+
+func _edge_candidates() -> Array:
+	var out: Array = []
+	if not _graph_usable or _cur_hops <= 0 or _cur_hops >= 999 or mode == "flee":
+		return out
+	var mine := _node_below(ball.global_position)
+	if mine < 0:
+		return out
+	var by_node := {}
+	for e in _edges[mine]:
+		var j: int = e[0]
+		if _gdist[j] < _cur_hops:
+			if not by_node.has(j):
+				by_node[j] = []
+			by_node[j].append([e[1], e[2]])
+	var targets: Array = by_node.keys()
+	targets.sort_custom(func(a: int, b: int) -> bool: return _gdist[a] < _gdist[b])
+	var steps := float(_charge_steps())
+	for k in mini(EDGE_CANDIDATES, targets.size()):
+		var jumps: Array = by_node[targets[k]]
+		var mid: Array = jumps[jumps.size() / 2]
+		for dk in EDGE_REFINE:
+			var amount: float = float(mid[1]) + dk / steps
+			if amount >= 0.0 and amount <= 1.0:
+				out.append([mid[0], amount])
+	return out
+
+
+func _stomp_candidates() -> Array:
+	var out: Array = []
+	if mode == "flee" or not bool(_ctx["foe_on"]) or not (_ctx["land_pos"] as Vector2).is_finite() or float(_ctx["foe_invuln"]) > 1.0:
+		return out
+	var me: Vector2 = _ctx["land_pos"]
+	var fp: Vector2 = _ctx["foe_pos"]
+	var fv: Vector2 = _ctx["foe_vel"]
+	var steps0 := maxi(1, roundi(ball.charge_time * 60.0))
+	if _ctx.get("foe_reactive", false) and absf(fp.y - me.y) < 60.0 and absf(fp.x - me.x) > REACT_RANGE and absf(fp.x - me.x) < 2.0 * STOMP_RANGE:
+		for n in range(steps0 - 8, steps0 + 1, 2):
+			out.append([signi(roundi(fp.x - me.x)), float(n) / steps0])
+	if absf(fp.x - me.x) > STOMP_RANGE or fp.y - me.y < -200.0 or fp.y - me.y > 420.0 or fv.length() > 80.0:
+		return out
+	var g: float = _ctx["g_me"]
+	var target_y := fp.y - (ball.radius + foe.radius) * 0.85
+	var steps := maxi(1, roundi(ball.charge_time * 60.0))
+	for dir in [-1, 1]:
+		if absf(fp.x - me.x) > 6.0 and signf(fp.x - me.x) != dir:
+			continue
+		var hits: Array = []
+		for n in range(0, steps + 1):
+			var amount := float(n) / steps
+			var v := _jump_vel(dir, amount, _ctx)
+			var c0 := me.y - 1.0 - target_y
+			var disc := v.y * v.y - 2.0 * g * c0
+			if disc < 0.0:
+				continue
+			if fp.y > me.y + 40.0:
+				var x_back := me.x + v.x * (-2.0 * v.y / g)
+				if _is_solid(floori((me.y + ball.radius + 2.0) / TILE), floori(x_back / TILE)):
+					continue
+			var t := (-v.y + sqrt(disc)) / g
+			if v.y + g * t < ball.stomp_speed:
+				continue
+			var x := me.x + v.x * (1.0 - exp(-_damp * t)) / maxf(_damp, 0.0001)
+			var wall_l := TILE + ball.radius
+			var wall_r := _cols * TILE - TILE - ball.radius
+			if x < wall_l:
+				x = wall_l + (wall_l - x) * BOUNCE
+			elif x > wall_r:
+				x = wall_r - (x - wall_r) * BOUNCE
+			var miss := absf(x - fp.x)
+			if miss < STOMP_MISS:
+				hits.append([miss, amount])
+		hits.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+		for k in mini(2, hits.size()):
+			out.append([dir, hits[k][1]])
+	return out
 
 
 func _snapshot() -> void:
@@ -949,8 +1297,9 @@ func _snapshot() -> void:
 	for s in brawl.stall_spikes:
 		if is_instance_valid(s):
 			_dyn_spikes.append(Rect2(s.position.x - SPIKE_W / 2.0, s.position.y - SPIKE_H, SPIKE_W, SPIKE_H))
-	for col in brawl.upcoming_stall_columns(2):
-		_dyn_spikes.append(Rect2(col * TILE + (TILE - SPIKE_W) / 2.0, (brawl.floor_row() + 1) * TILE - SPIKE_H, SPIKE_W, SPIKE_H))
+	_soon_spikes.clear()
+	for col in brawl.upcoming_stall_columns(2, STALL_LOOKAHEAD):
+		_soon_spikes.append(Rect2(col * TILE, brawl.floor_row() * TILE, TILE, TILE))
 	_traps.clear()
 	for t in brawl.items.traps:
 		if is_instance_valid(t):
@@ -962,7 +1311,9 @@ func _snapshot() -> void:
 		"foe_invuln": foe.invuln, "my_invuln": ball.invuln, "ice": ice, "box_pos": Vector2.INF, "t_contact": 0.0,
 		"margin": (18.0 + 70.0 * (1.0 - skill)) * (1.6 if ice else 1.0),
 		"hazard": brawl.hazard_y(),
+		"foe_reactive": _foe_reactive > 0.5, "foe_hop": foe.jump_velocity(0, foe.straight_jump),
 	}
+	_ctx["land_pos"] = Vector2.INF
 	_ctx["t_contact"] = _time_to_contact()
 
 
@@ -974,6 +1325,7 @@ func _time_to_contact() -> float:
 	var g: float = _ctx["g_me"]
 	for i in 90:
 		if _advance(b, g) == HIT_LAND:
+			_ctx["land_pos"] = b.pos
 			return (i + 1) * DT
 	return 99.0
 
@@ -988,11 +1340,15 @@ func _pick_mode(foe_pos: Vector2) -> String:
 	if _lure_time > 0.0:
 		return "flee"
 	if brawl.items.held[player_index] == "" and not foe.dead:
-		var best := 560.0
+		var best := minf(560.0, maxf(160.0, 0.6 * ball.global_position.distance_to(foe_pos)))
 		for box in brawl.items.boxes:
 			if not is_instance_valid(box):
 				continue
 			if brawl.items.is_buried(box.position + Vector2(0.0, 60.0)):
+				continue
+			if (_danger_at(box.position, BOX_SPIKE_GAP) & 1) != 0:
+				continue
+			if not _ground_y_below(box.position.x - BOX_SPIKE_GAP, box.position.y, ball.radius) < INF or not _ground_y_below(box.position.x + BOX_SPIKE_GAP, box.position.y, ball.radius) < INF:
 				continue
 			var d: float = box.position.distance_to(ball.global_position)
 			if d < best and box.position.distance_to(foe_pos) > 120.0:
@@ -1022,9 +1378,42 @@ func _think_step() -> void:
 		done += 1
 		if (_deadline < 0 and done >= EVALS_PER_FRAME) or _out_of_time():
 			break
+	if _think_job == null and _queue.is_empty() and not _refined:
+		_refined = true
+		_refine_near_misses()
+		if not _queue.is_empty():
+			return
 	if _think_job == null and _queue.is_empty():
 		_choose_begin()
 		_choose_step()
+
+
+func _refine_near_misses() -> void:
+	if mode == "flee" or not bool(_ctx["foe_on"]) or float(_ctx["foe_invuln"]) > 1.0:
+		return
+	var near: Array = []
+	for r in _results:
+		var res: Dictionary = r["res"]
+		if res["stomp_opp"] >= 0.0:
+			return
+		if r["dir"] != 0 and r["charge"] >= 0.0 and not res["dead"] and res["min_gap"] < REFINE_GAP:
+			near.append([res["min_gap"], r["dir"], r["charge"]])
+	near.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var steps := float(_charge_steps())
+	var added := 0
+	for n in near:
+		for dk in [-1, 1, -2, 2]:
+			var amount: float = float(n[2]) + dk / steps
+			if amount < 0.0 or amount > 1.0 or added >= REFINE_MAX:
+				continue
+			var before := _queue.size()
+			_add_candidate([n[1], amount])
+			for r in _results:
+				if r["dir"] == n[1] and absf(float(r["charge"]) - amount) < 0.01 and _queue.size() > before:
+					_queue.pop_back()
+					break
+			if _queue.size() > before:
+				added += 1
 
 
 func _choose_begin() -> void:
@@ -1034,9 +1423,14 @@ func _choose_begin() -> void:
 		mode = "dodge"
 	var noise := (1.5 - skill) * 18.0
 	var ranked: Array = []
+	var here := _node_below(ball.global_position)
 	for r in _results:
-		var is_hop: bool = r["charge"] >= 0.0
-		ranked.append([float(r["score"]) + randf_range(-noise, noise) - (6.0 if is_hop else 0.0), r])
+		var cost := 0.0
+		if r["charge"] >= 0.0:
+			cost = 6.0
+			if r["res"]["stomp_opp"] < 0.0 and _node_index_at(r["res"]["end"]) == here:
+				cost = 30.0
+		ranked.append([float(r["score"]) + randf_range(-noise, noise) - cost, r])
 	ranked.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
 	if randf() < (1.0 - skill) * 0.06:
 		var pick: Array = ranked[randi() % ranked.size()]
@@ -1045,7 +1439,7 @@ func _choose_begin() -> void:
 	if _celebrate:
 		_celebrate = false
 		ranked.push_front([0.0, _results[1]])
-	var strict := _since_hop < RELAX_AFTER and not brawl.stall_active
+	var strict := _since_progress < RELAX_AFTER and not brawl.stall_active and mode != "pass_bomb"
 	var sigma := (0.02 + 0.12 * (1.0 - skill)) * (1.0 if strict else CAREFUL_SCALE)
 	_ch_job = null
 	_ch_ranked = ranked
@@ -1054,6 +1448,7 @@ func _choose_begin() -> void:
 	_ch_best = _results[0]
 	_ch_i = 0
 	_ch_checks = 0
+	_ch_wait_seen = false
 	_ch_amounts = []
 	_ch_k = 0
 	_ch_thin = false
@@ -1066,20 +1461,33 @@ func _choose_step() -> void:
 		if _ch_amounts.is_empty():
 			if r["charge"] < 0.0:
 				_ch_best = r
-				break
+				if _ch_wait_seen or not _keep_looking():
+					break
+				_ch_wait_seen = true
+				_ch_wait_score = _ch_ranked[_ch_i][0]
+				_ch_i += 1
+				continue
 			if r["res"]["dead"] or (r["dir"] != 0 and _clock < _veto_until and r["dir"] == _veto_dir and absf(r["charge"] - _veto_charge) < 0.13):
 				_ch_i += 1
 				continue
+			if _ch_wait_seen:
+				if _ch_ranked[_ch_i][0] < _ch_wait_score - AFTER_WAIT_MARGIN and _since_hop <= STILL_FORCE:
+					break
+				if not _moves_on(r):
+					_ch_i += 1
+					continue
 			if r["dir"] == 0:
 				_ch_best = r
 				break
-			if _ch_checks >= 6:
+			if _ch_checks >= (MAX_CHECKS * 2 if _since_hop > STILL_FORCE else MAX_CHECKS):
 				_ch_i += 1
 				continue
 			_ch_checks += 1
 			var charge: float = r["charge"]
-			var err := 1.5 * _jump_sigma(_ch_sigma, charge)
+			var sig := _ch_sigma * (STOMP_SIGMA_SCALE if r["res"]["stomp_opp"] >= 0.0 else 1.0)
+			var err := 1.5 * _jump_sigma(sig, charge) * (2.0 if r["res"]["spring"] else 1.0)
 			_ch_amounts = [maxf(0.0, charge - err), charge, minf(1.0, charge + err)]
+			_ch_err = err
 			_ch_k = 0
 		if _ch_job == null:
 			_ch_job = _eval_begin(r["dir"], _ch_amounts[_ch_k], false, {}, THIN_SKIN if _ch_thin else SAFETY_SKIN)
@@ -1087,12 +1495,13 @@ func _choose_step() -> void:
 			return
 		var res := _ch_job.res
 		_ch_job = null
-		var unsafe: bool = res["dead"] or res["spring"] or (_ch_strict and res["edge"])
+		var unsafe: bool = res["dead"] or ((res["soon"] or res["edge_deadly"]) and not _desperate()) or (_ch_strict and res["edge"]) or (res["spring"] and res["bonk"])
 		if _ch_thin and not unsafe:
-			unsafe = (res["end"] as Vector2).distance_to(_thick_end) > THIN_DIVERGE
+			unsafe = (res["end"] as Vector2).distance_to(_thick_end) > THIN_DIVERGE and (res["edge"] or _thick_edge)
 		if not unsafe and res["bonk"] and not _ch_thin:
 			_ch_thin = true
 			_thick_end = res["end"]
+			_thick_edge = res["edge"]
 			if _out_of_time():
 				return
 			continue
@@ -1109,6 +1518,46 @@ func _choose_step() -> void:
 	_choose_finish(_ch_best)
 
 
+func _desperate() -> bool:
+	if _since_progress > DESPERATE_AFTER:
+		return true
+	if mode == "pass_bomb" and brawl.events != null and brawl.events.time_left < BOMB_HURRY:
+		return true
+	if _results.is_empty():
+		return false
+	var w: Dictionary = _results[0]["res"]
+	return w["dead"] or w["soon"]
+
+
+func _keep_looking() -> bool:
+	if _since_hop > STILL_LIMIT:
+		return true
+	if mode == "flee":
+		return false
+	if _graph_usable and _cur_hops < 999:
+		return _cur_hops > 0
+	return ball.global_position.distance_to(_ctx["foe_pos"]) > 120.0
+
+
+func _moves_on(r: Dictionary) -> bool:
+	var res: Dictionary = r["res"]
+	if res["stomp_opp"] >= 0.0:
+		return true
+	if not res["landed"]:
+		return false
+	var e: Vector2 = res["end"]
+	if _since_hop > STILL_FORCE:
+		return e.distance_to(ball.global_position) > 40.0
+	if _graph_usable and _cur_hops < 999:
+		var h := _hops_to_goal(e)
+		if h < _cur_hops:
+			return true
+		var limit := _cur_hops + (1 if _since_hop > 2.0 * STILL_LIMIT else 0)
+		return _since_hop > STILL_LIMIT and h <= limit and _node_index_at(e) != _node_below(ball.global_position)
+	var o: Vector2 = _ctx["foe_pos"]
+	return e.distance_to(o) < ball.global_position.distance_to(o) - 40.0 or (_since_hop > STILL_LIMIT and absf(e.x - ball.global_position.x) > 40.0)
+
+
 func _choose_finish(best: Dictionary) -> void:
 	var sigma := _ch_sigma
 	_ch_ranked = []
@@ -1120,6 +1569,8 @@ func _choose_finish(best: Dictionary) -> void:
 	var dir: int = best["dir"]
 	var amount: float = best["charge"]
 	if dir != 0:
+		if best["res"]["stomp_opp"] >= 0.0:
+			sigma *= STOMP_SIGMA_SCALE
 		var s := _jump_sigma(sigma, amount)
 		amount = clampf(amount + clampf(randfn(0.0, s), -1.5 * s, 1.5 * s), 0.0, 1.0)
 	_plan_end = best["res"]["end"]
@@ -1129,9 +1580,15 @@ func _choose_finish(best: Dictionary) -> void:
 	_lc_state = 0
 	_aligned = false
 	_plan_strict = _ch_strict
+	_plan_err = _ch_err if dir != 0 else LAUNCH_CHECK_MIN_ERR
+	_prep_hold = 0
 	_hold_frames = 0 if dir == 0 else maxi(1, roundi(amount * ball.charge_time * 60.0))
 	var res: Dictionary = best["res"]
 	_delay_frames = maxi(0, roundi(float(res["delay"]) * 60.0) - _think_frames)
+	if _delay_frames > roundi(MAX_PLAN_DELAY * 60.0):
+		phase = "idle"
+		_think_cd = 0.1
+		return
 	phase = "prep"
 
 
@@ -1162,9 +1619,12 @@ func _early_check(frames_left: int) -> bool:
 
 
 func _fire_charged() -> void:
-	var off_plan: bool = ball.charge_dir == 0 or ball.charge_dir != _lc_dir or absf(ball.charge - _plan_charge) > LAUNCH_CHECK_ERR
+	var off_plan: bool = ball.charge_dir == 0 or ball.charge_dir != _lc_dir or absf(ball.charge - _plan_charge) > LAUNCH_CHECK_ERR or (_lc_from_x < INF and absf(ball.global_position.x - _lc_from_x) > CHECK_DRIFT)
 	var too_high: bool = not ball.on_ground and _frames_to_ground(AIR_FIRE_FRAMES) > AIR_FIRE_FRAMES
-	if _lc_state != 2 or off_plan or too_high:
+	var commit := _abort_streak >= ABORT_COMMIT
+	if commit:
+		off_plan = ball.charge_dir == 0 or ball.charge_dir != _lc_dir or absf(ball.charge - _plan_charge) > 2.0 * LAUNCH_CHECK_ERR or (_lc_from_x < INF and absf(ball.global_position.x - _lc_from_x) > CHECK_DRIFT)
+	if (_lc_state != 2 and not (commit and _lc_k >= 2)) or off_plan or too_high or (_lc_state == 2 and not _lc_safe):
 		timing_aborts += 1
 		timing_reason = "check_late=%s off_plan=%s (dir %d/%d charge %.2f/%.2f) too_high=%s (to ground %d frames, vel %s, hold %d)" % [_lc_state != 2, off_plan, ball.charge_dir, _lc_dir, ball.charge, _plan_charge, too_high, _frames_to_ground(60), ball.linear_velocity.round(), _hold_frames]
 		_cancel_jump()
@@ -1226,6 +1686,7 @@ func _cancel_jump() -> void:
 	_lc_job = null
 	phase = "idle"
 	_think_cd = 0.0
+	_abort_streak += 1
 
 
 func _launch_begin(planned := -1.0, lead := 0.0) -> void:
@@ -1238,9 +1699,11 @@ func _launch_begin(planned := -1.0, lead := 0.0) -> void:
 	if _lc_dir == 0:
 		amount = ball.straight_jump
 	_lc_amounts = []
-	for delta in [-LAUNCH_CHECK_ERR, 0.0, LAUNCH_CHECK_ERR]:
+	var err := clampf(_plan_err, LAUNCH_CHECK_MIN_ERR, LAUNCH_CHECK_ERR)
+	for delta in [-err, 0.0, err]:
 		_lc_amounts.append(clampf(amount + delta, 0.0, 1.0))
 	_lc_lead = lead
+	_lc_from_x = ball.global_position.x if ball.on_ground and absf(ball.linear_velocity.x) < 30.0 else INF
 	_lc_thin = false
 	_lc_k = 0
 	_lc_safe = true
@@ -1255,12 +1718,13 @@ func _launch_check_run() -> bool:
 			return false
 		var res := _lc_job.res
 		_lc_job = null
-		var unsafe: bool = res["dead"] or res["spring"] or (_plan_strict and res["bonk"] and res["edge"])
+		var unsafe: bool = res["dead"] or res["soon"] or (res["spring"] and res["bonk"]) or (_abort_streak < ABORT_COMMIT and _plan_strict and res["bonk"] and res["edge"])
 		if _lc_thin and not unsafe:
-			unsafe = (res["end"] as Vector2).distance_to(_thick_end) > THIN_DIVERGE
+			unsafe = (res["end"] as Vector2).distance_to(_thick_end) > THIN_DIVERGE and (res["edge"] or _thick_edge)
 		if not unsafe and res["bonk"] and not _lc_thin:
 			_lc_thin = true
 			_thick_end = res["end"]
+			_thick_edge = res["edge"]
 			if _out_of_time():
 				return false
 			continue
@@ -1268,6 +1732,7 @@ func _launch_check_run() -> bool:
 		_lc_k += 1
 		if unsafe:
 			_lc_safe = false
+			abort_reason = "charge=%.2f dead=%s bonk=%s edge=%s thin=%s end=%s stomp=%.2f" % [_lc_amounts[_lc_k - 1], res["dead"], res["bonk"], res["edge"], _lc_thin, (res["end"] as Vector2).round(), res["stomp_opp"]]
 		elif _lc_k < _lc_amounts.size() and _out_of_time():
 			return false
 	return true
@@ -1301,6 +1766,7 @@ func _launch_finish(safe: bool) -> void:
 	last_jump = "from=%s plan_dir=%d real_dir=%d rev=%s charge=%.2f pred=%s vel=%s ground=%s" % [ball.global_position.round(), _plan_dir, ball.charge_dir, ball.reverse_controls, ball.charge, _plan_end.round(), ball.linear_velocity.round(), ball.on_ground]
 	_launched = false
 	_launch_wait = 40
+	_abort_streak = 0
 	phase = "launch"
 	hops += 1
 	_since_hop = 0.0

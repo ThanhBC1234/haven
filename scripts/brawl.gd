@@ -27,6 +27,7 @@ const DOUBLE_KO_TEXT := "DOUBLE KO! NO POINTS"
 const QUIT_CONFIRM_SECONDS := 2.0
 const SPAWN_CLEAR := 150.0
 const SPAWN_MIN_GAP := 40.0
+const SPAWN_TRAP_GAP := 12.0
 
 static var _last_arena := -1
 
@@ -36,6 +37,7 @@ static var _last_arena := -1
 @export var win_panel_delay := 1.0
 @export var stall_timeout := 30.0
 @export var stall_step := 2.0
+@export var stall_warning := 1.5
 @export var sudden_death_delay := 4.0
 @export var sudden_death_speed := 35.0
 
@@ -57,6 +59,7 @@ var vs_bot := false
 var bot: BrawlBot = null
 var stall_active := false
 var stall_spikes: Array[Spikes] = []
+var _stall_marks: Array = []
 var sudden_death_active := false
 var _sd_wait := 0.0
 var _sd_y := INF
@@ -73,6 +76,7 @@ var _quit_left := 0.0
 var _safe_spots: Array[Vector2] = []
 var _was_touching := false
 var _shove_wait := 0
+var _pending_win: Ball = null
 
 
 func _ready() -> void:
@@ -230,7 +234,7 @@ func _hud_cover_rects() -> Array[Rect2]:
 			rects.append(Rect2(crown_c - crown_size / 2.0, crown_size))
 		if carrier:
 			var bomb_size := PixelArt.size_of(PixelArt.BOMB, BrawlEvents.BombMarker.PX)
-			var bomb_c := c - Vector2(0.0, ball.radius + BrawlEvents.BOMB_OFFSET)
+			var bomb_c := c + BrawlEvents.BombMarker.offset_for(ball)
 			rects.append(Rect2(bomb_c - bomb_size / 2.0, bomb_size))
 	return rects
 
@@ -254,6 +258,8 @@ func kill(victim: Ball, cause: String) -> void:
 		scores[vi] -= 1
 		hud.set_score(balls[vi].player_id, scores[vi])
 		_died_frame[1 - vi] = -1
+		if _pending_win == victim:
+			_pending_win = null
 		victim.dead = true
 		_reset_stall()
 		_update_leader()
@@ -268,16 +274,24 @@ func kill(victim: Ball, cause: String) -> void:
 	scores[si] += 1
 	hud.set_score(scorer.player_id, scores[si])
 	_reset_stall()
-	var over: bool = scores[si] >= WIN_SCORE
-	if over:
-		match_running = false
-		winner = scorer
+	if scores[si] >= WIN_SCORE and _pending_win == null:
+		_pending_win = scorer
+		_settle_win.call_deferred()
 	_update_leader()
 	point_scored.emit(scorer, victim, cause)
 	hud.flash(_point_text(scorer, victim, cause), 1.0, BrawlHud.PLAYER_COLORS[si])
-	if over:
-		_end_match(scorer)
-	_death_sequence(victim, cause, not over)
+	_death_sequence(victim, cause, true)
+
+
+func _settle_win() -> void:
+	var scorer := _pending_win
+	_pending_win = null
+	if scorer == null or not match_running or scores[balls.find(scorer)] < WIN_SCORE:
+		return
+	match_running = false
+	winner = scorer
+	_update_leader()
+	_end_match(scorer)
 
 
 func double_kill(cause: String) -> void:
@@ -326,10 +340,12 @@ func _death_sequence(victim: Ball, cause: String, respawn: bool) -> void:
 	victim.hide()
 	victim.collision_layer = 0
 	victim.teleport(spawn_points[idx])
-	if not respawn:
+	if not respawn or (winner != null and winner != victim):
 		return
 	await get_tree().create_timer(respawn_delay).timeout
 	if not is_inside_tree():
+		return
+	if winner != null and winner != victim:
 		return
 	_respawn(victim)
 
@@ -337,24 +353,37 @@ func _death_sequence(victim: Ball, cause: String, respawn: bool) -> void:
 func respawn_spot(ball: Ball) -> Vector2:
 	var home := spawn_of(ball)
 	var foe := opponent_of(ball)
-	if foe.dead or not foe.visible:
-		return home
+	var camper := not foe.dead and foe.visible
 	var foe_pos := foe.global_position
 	var min_dist := ball.radius + foe.radius + SPAWN_MIN_GAP
-	if home.distance_to(foe_pos) >= maxf(SPAWN_CLEAR, min_dist):
+	var home_trap := _trap_at(home, ball.radius)
+	if not home_trap and (not camper or home.distance_to(foe_pos) >= maxf(SPAWN_CLEAR, min_dist)):
 		return home
 	if _safe_spots.is_empty():
 		_build_safe_spots()
 	var best := home
-	var best_dist := home.distance_to(foe_pos)
+	var best_score := -INF if home_trap else home.distance_to(foe_pos)
 	for spot in _safe_spots:
 		if sudden_death_active and spot.y + 16.0 >= _sd_y - 100.0:
 			continue
-		var d := spot.distance_to(foe_pos)
-		if d > best_dist:
+		if _trap_at(spot, ball.radius) or (camper and spot.distance_to(foe_pos) < min_dist):
+			continue
+		var score := spot.distance_to(foe_pos) if camper and not home_trap else -spot.distance_to(home)
+		if camper and home_trap and spot.distance_to(foe_pos) < maxf(SPAWN_CLEAR, min_dist):
+			score -= 2000.0
+		if score > best_score:
 			best = spot
-			best_dist = d
+			best_score = score
 	return best
+
+
+func _trap_at(spot: Vector2, rad: float) -> bool:
+	if items == null:
+		return false
+	for trap in items.traps:
+		if is_instance_valid(trap) and items.trap_near(trap, spot, rad + SPAWN_TRAP_GAP):
+			return true
+	return false
 
 
 func _build_safe_spots() -> void:
@@ -374,7 +403,10 @@ func _build_safe_spots() -> void:
 
 func _respawn(ball: Ball) -> void:
 	var base_radius := ball.radius / ball.size_factor
-	ball.teleport(respawn_spot(ball) + Vector2(0.0, base_radius - ball.radius))
+	var spot := respawn_spot(ball)
+	if items != null:
+		items.clear_traps_near(spot, ball.radius + SPAWN_TRAP_GAP)
+	ball.teleport(spot + Vector2(0.0, base_radius - ball.radius))
 	ball.collision_layer = BALL_LAYER
 	ball.show()
 	ball.invuln = RESPAWN_INVULN
@@ -464,9 +496,9 @@ func floor_row() -> int:
 	return level.rows.size() - 3
 
 
-func upcoming_stall_columns(count := 2) -> Array[int]:
+func upcoming_stall_columns(count := 2, lookahead := 0.0) -> Array[int]:
 	var cols: Array[int] = []
-	if not stall_active:
+	if not stall_active and _stall_time < stall_timeout - lookahead:
 		return cols
 	for i in mini(count, _stall_left.size()):
 		cols.append(_stall_left[i])
@@ -488,6 +520,10 @@ func _reset_stall() -> void:
 		if is_instance_valid(s):
 			s.queue_free()
 	stall_spikes.clear()
+	for m in _stall_marks:
+		if is_instance_valid(m):
+			m.queue_free()
+	_stall_marks.clear()
 	sudden_death_active = false
 	_sd_wait = 0.0
 	_sd_pause = 0.0
@@ -514,7 +550,11 @@ func _update_stall(delta: float) -> void:
 		return
 	if not stall_active:
 		stall_active = true
+		_stall_next = stall_warning
 		hud.flash("NO POINTS - SPIKES!", 1.4, Color("#ffb020"))
+		for side in [_stall_left, _stall_right]:
+			if not side.is_empty():
+				_add_stall_mark(side[0])
 	if sudden_death_active:
 		_rise_hazard(delta)
 		return
@@ -540,6 +580,36 @@ func _add_stall_spike(c: int) -> void:
 	stall_spikes.append(s)
 	s.scale = Vector2(1.0, 0.1)
 	s.create_tween().tween_property(s, "scale:y", 1.0, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _add_stall_mark(c: int) -> void:
+	var mark := StallMark.new()
+	mark.position = Vector2((c + 0.5) * Level.TILE, (floor_row() + 1) * Level.TILE)
+	level.add_child(mark)
+	_stall_marks.append(mark)
+	var life := mark.create_tween()
+	life.tween_interval(maxf(stall_warning, 0.05))
+	life.tween_callback(mark.queue_free)
+
+
+class StallMark extends Node2D:
+	var _time := 0.0
+
+	func _init() -> void:
+		z_index = 4
+
+	func _process(delta: float) -> void:
+		_time += delta
+		visible = int(_time * 6.0) % 2 == 0
+		queue_redraw()
+
+	func _draw() -> void:
+		var col := Color("#ffb020")
+		for x in [-8.0, 8.0]:
+			var tri := PackedVector2Array([Vector2(x - 7.0, 0.0), Vector2(x, -14.0), Vector2(x + 7.0, 0.0), Vector2(x - 7.0, 0.0)])
+			draw_polyline(tri, col, 2.0)
+		draw_rect(Rect2(-2.0, -30.0, 4.0, 9.0), col)
+		draw_rect(Rect2(-2.0, -19.0, 4.0, 3.0), col)
 
 
 func hazard_y() -> float:

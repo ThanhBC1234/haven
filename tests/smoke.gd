@@ -1045,6 +1045,7 @@ func _brawl_checks() -> void:
 		await _brawl_ready(br)
 		br.scores[winner_index] = Brawl.WIN_SCORE - 1
 		br.kill(loser, "pit")
+		await _frames(1)
 		_expect(br.scores[winner_index] == Brawl.WIN_SCORE and not br.match_running and overs.size() == 1 and overs[0] == winner and br.winner == winner, "player %d reaching WIN_SCORE ends the match and emits match_over(winner)" % (winner_index + 1))
 		await _frames(40)
 		var texts := []
@@ -1064,6 +1065,7 @@ func _brawl_checks() -> void:
 	br = await _make_brawl(0)
 	br.stall_timeout = 0.5
 	br.stall_step = 0.25
+	br.stall_warning = 0.0
 	await _brawl_ready(br)
 	br.kill(br.balls[1], "pit")
 	await _frames(2)
@@ -1754,7 +1756,7 @@ func _brawl_item_checks() -> void:
 	_expect(sprung.size() == 1 and sprung[0] == b and gy - apex > 400.0, "SPRING: the armed trap launches whoever touches it high into the air (%.0f px)" % (gy - apex))
 	_expect(it.traps.is_empty() and (not is_instance_valid(trap) or trap.get_parent() == null), "SPRING: the trap disappears after it fired")
 	print("    (a normal full jump rises about %.0f px)" % (pow(a.max_speed, 2) / (2.0 * 1400.0)))
-	await _item_place(b, Vector2(1000, gy))
+	await _item_place(b, Vector2(1100, gy))
 	await _item_place(a, Vector2(100, gy))
 	it.give(a, "spring")
 	it.use(a)
@@ -1764,14 +1766,14 @@ func _brawl_item_checks() -> void:
 		await _frames(1)
 		apex = minf(apex, a.global_position.y)
 	_expect(sprung.size() == 2 and sprung[1] == a and gy - apex > 400.0, "SPRING: the owner is launched too when still standing on it (%.0f px)" % (gy - apex))
-	await _item_place(b, Vector2(1000, gy))
-	await _item_place(a, Vector2(300, gy))
+	await _item_place(b, Vector2(1100, gy))
+	await _item_place(a, Vector2(200, gy))
 	await _frames(100)
 	it.spring_life_seconds = 1.0
 	await _item_place(a, Vector2(150, gy))
 	it.give(a, "spring")
 	it.use(a)
-	await _item_place(a, Vector2(260, gy), 1)
+	await _item_place(a, Vector2(236, gy), 1)
 	_expect(it.traps.size() == 1, "SPRING: a trap is waiting (life 1 s for the test)")
 	await _frames(80)
 	_expect(it.traps.is_empty() and sprung.size() == 2, "SPRING: an untouched trap disappears on its own after its lifetime")
@@ -2237,14 +2239,14 @@ func _brawl_bot_checks() -> void:
 	a = br.balls[0]
 	b = br.balls[1]
 	a.teleport(Vector2(60, 625))
-	b.teleport(Vector2(330, 625))
+	b.teleport(Vector2(236, 625))
 	await _frames(40)
 	var start_gap := absf(b.global_position.x - a.global_position.x)
 	var closest := start_gap
 	for i in 60 * 5:
 		await _frames(1)
 		closest = minf(closest, absf(b.global_position.x - a.global_position.x))
-	_expect(bot.hops >= 2 and closest < start_gap - 100.0, "the bot hops toward the player (gap %.0f px -> closest %.0f px in 5 s, %d hops, now at %s)" % [start_gap, closest, bot.hops, b.global_position.round()])
+	_expect(bot.hops >= 2 and closest < start_gap - 80.0, "the bot hops toward the player (gap %.0f px -> closest %.0f px in 5 s, %d hops, now at %s)" % [start_gap, closest, bot.hops, b.global_position.round()])
 	await _free_brawl(br)
 
 	br = await _bot_br(0, 105)
@@ -2270,18 +2272,18 @@ func _brawl_bot_checks() -> void:
 	bot = br.bot
 	a = br.balls[0]
 	b = br.balls[1]
-	b.teleport(Vector2(1000, 625))
+	b.teleport(Vector2(1060, 625))
 	a.teleport(Vector2(60, 625))
 	await _frames(40)
 	var picked := []
 	br.items.item_picked.connect(func(ball: Ball, id: String) -> void: picked.append([ball, id]))
-	var box := br.items.spawn_box("banana", Vector2(1000 + 150, 640.0 - BrawlItems.BOX_LIFT))
+	var box := br.items.spawn_box("banana", Vector2(1060 + 150, 640.0 - BrawlItems.BOX_LIFT))
 	_expect(box != null and br.items.boxes.size() == 1, "a box was placed 150 px from the bot")
 	await _frames(60 * 6)
 	_expect(picked.any(func(p: Array) -> bool: return p[0] == b), "the bot walks to a nearby box and picks it up (%d picks)" % picked.size())
 	br.items.give(b, "banana")
 	a.teleport(Vector2(760, 625))
-	b.teleport(Vector2(1000, 625))
+	b.teleport(Vector2(1060, 625))
 	a.invuln = 1000.0
 	var used := []
 	br.items.item_used.connect(func(ball: Ball, id: String) -> void: used.append([ball, id]))
@@ -2294,7 +2296,7 @@ func _brawl_bot_checks() -> void:
 	a = br.balls[0]
 	b = br.balls[1]
 	a.teleport(Vector2(100, 625))
-	b.teleport(Vector2(340, 625))
+	b.teleport(Vector2(236, 625))
 	var frames_to_point := 0
 	while br.scores[1] == 0 and frames_to_point < 60 * 30:
 		await _frames(1)

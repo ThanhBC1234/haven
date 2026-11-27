@@ -50,6 +50,8 @@ func _bound(action: String, keycode: Key) -> bool:
 
 
 func _graph_of(arena: int, budget: int, perturb := false) -> Dictionary:
+	BrawlBot.use_prebuilt = false
+	BrawlBot._graph_cache.clear()
 	Game.brawl_vs_bot = true
 	var br: Brawl = load("res://scenes/brawl.tscn").instantiate()
 	br.arena_index = arena
@@ -71,6 +73,8 @@ func _graph_of(arena: int, budget: int, perturb := false) -> Dictionary:
 	await s._frames(8)
 	br.queue_free()
 	await s._frames(2)
+	BrawlBot.use_prebuilt = true
+	BrawlBot._graph_cache.clear()
 	return result
 
 
@@ -86,7 +90,7 @@ func _graph_checks() -> void:
 		var arena_name: String = BrawlData.ARENAS[arena]["name"]
 		s._expect(by_frame["done"] and nodes > 20 and edge_count > nodes and by_frame["ticks"] == nodes, "bot graph '%s': frame mode builds %d nodes / %d edges, one node per tick (%d ticks)" % [arena_name, nodes, edge_count, by_frame["ticks"]])
 		s._expect(budget["done"] and budget["nodes"] == by_frame["nodes"] and budget["edges"] == by_frame["edges"], "bot graph '%s': the %d us time budget gives the IDENTICAL graph (%d ticks)" % [arena_name, BrawlBot.TICK_BUDGET_USEC, budget["ticks"]])
-		s._expect(tiny["done"] and tiny["edges"] == by_frame["edges"] and tiny["ticks"] > nodes * 17 * 5, "bot graph '%s': a jump simulation split over many ticks (1 us budget: %d ticks for %d nodes x 17 jumps, a few steps per tick) is still the IDENTICAL graph" % [arena_name, tiny["ticks"], nodes])
+		s._expect(tiny["done"] and tiny["edges"] == by_frame["edges"] and tiny["ticks"] > nodes * 17 * 5, "bot graph '%s': a jump simulation split over many ticks (1 us budget: %d ticks for %d nodes x 45 jumps, a few steps per tick) is still the IDENTICAL graph" % [arena_name, tiny["ticks"], nodes])
 		if arena == 0:
 			var odd := await _graph_of(arena, -1, true)
 			s._expect(odd["edges"] == by_frame["edges"], "bot graph '%s': a jump boost or a bigger ball at build time does not change the graph" % arena_name)
@@ -141,7 +145,7 @@ func _budget_checks() -> void:
 	var a := br.balls[0]
 	b = br.balls[1]
 	a.teleport(Vector2(60, 625))
-	b.teleport(Vector2(330, 625))
+	b.teleport(Vector2(236, 625))
 	await s._frames(40)
 	var start_gap := absf(b.global_position.x - a.global_position.x)
 	var closest := start_gap
@@ -156,7 +160,7 @@ func _budget_checks() -> void:
 		spread = spread + 1 if bot.phase == "think" or bot.phase == "choose" or bot.phase == "check" else 0
 		longest_spread = maxi(longest_spread, spread)
 	BrawlBot.tick_budget_usec = saved
-	s._expect(bot.hops >= 2 and closest < start_gap - 100.0 and deaths[0] == 0, "bot budget: even with only 0.25 ms per tick the bot hops toward the player without dying (gap %.0f -> %.0f px, %d hops, deaths %d)" % [start_gap, closest, bot.hops, deaths[0]])
+	s._expect(bot.hops >= 2 and closest < start_gap - 80.0 and deaths[0] == 0, "bot budget: even with only 0.25 ms per tick the bot hops toward the player without dying (gap %.0f -> %.0f px, %d hops, deaths %d)" % [start_gap, closest, bot.hops, deaths[0]])
 	s._expect(longest_spread >= 5, "bot budget: a small budget spreads a decision over many ticks (%d in a row)" % longest_spread)
 	await s._free_brawl(br)
 

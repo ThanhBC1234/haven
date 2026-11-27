@@ -18,6 +18,7 @@ const FADE_ALPHA := 0.3
 const FADE_SPEED := 8.0
 const QUIT_PROMPT_COLOR := Color("#ffd23a")
 const PANEL_KEY_DELAY := 0.6
+const PANEL_JUMP_ACTIONS := ["jump", "p1_jump", "p2_jump", "solo_jump"]
 
 var win_score := 5
 var vs_bot := false
@@ -30,6 +31,7 @@ var item_ids := ["", ""]
 var _item_ammo := [0, 0]
 var cover_rects: Array[Rect2] = []
 var quit_prompt_label: Label
+var quit_prompt_panel: PanelContainer
 var _panel_alpha := {}
 var _quit_tween: Tween
 var _scores := [0, 0]
@@ -64,23 +66,37 @@ func setup(target_score: int, with_bot := false) -> void:
 	message_label.modulate.a = 0.0
 	add_child(message_label)
 
+	quit_prompt_panel = PanelContainer.new()
+	var backing := StyleBoxFlat.new()
+	backing.bg_color = Color(0.02, 0.03, 0.05, 0.88)
+	backing.border_color = QUIT_PROMPT_COLOR.darkened(0.3)
+	backing.set_border_width_all(2)
+	backing.set_content_margin_all(8)
+	backing.content_margin_left = 18
+	backing.content_margin_right = 18
+	quit_prompt_panel.add_theme_stylebox_override("panel", backing)
+	quit_prompt_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	quit_prompt_label = Label.new()
 	quit_prompt_label.text = "PRESS ESC AGAIN TO QUIT"
 	quit_prompt_label.add_theme_font_size_override("font_size", UiTheme.FONT_MEDIUM)
 	quit_prompt_label.add_theme_color_override("font_color", QUIT_PROMPT_COLOR)
 	quit_prompt_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	quit_prompt_label.add_theme_constant_override("outline_size", 8)
+	quit_prompt_panel.add_child(quit_prompt_label)
+	add_child(quit_prompt_panel)
+	quit_prompt_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE)
+	quit_prompt_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	quit_prompt_panel.position.y = EVENT_ACTIVE_Y + (EVENT_SIZE_ROLL.y - quit_prompt_panel.get_combined_minimum_size().y) / 2.0
 	quit_prompt_label.visible = false
-	add_child(quit_prompt_label)
-	quit_prompt_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 52)
+	quit_prompt_panel.visible = false
 
 	if vs_bot:
-		_add_hint("YOU: A / D or ARROWS to aim, W / SPACE / UP to jump, S / DOWN: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
-		_add_hint("Esc: menu", Control.PRESET_BOTTOM_RIGHT, UiTheme.DIM)
+		_add_hint("YOU: A / D or ARROWS to aim, W / SPACE / UP to jump, S / DOWN / F / J: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
+		_add_hint("Esc twice: menu", Control.PRESET_BOTTOM_RIGHT, UiTheme.DIM)
 	else:
 		_add_hint("P1:  A / D + W / SPACE     S: use item", Control.PRESET_BOTTOM_LEFT, PLAYER_COLORS[0].lightened(0.35))
 		_add_hint("P2:  LEFT / RIGHT + UP     DOWN: use item", Control.PRESET_BOTTOM_RIGHT, PLAYER_COLORS[1].lightened(0.35))
-		_add_hint("Esc: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
+		_add_hint("Esc twice: menu", Control.PRESET_CENTER_BOTTOM, UiTheme.DIM)
 	queue_redraw()
 
 
@@ -126,11 +142,14 @@ func show_quit_prompt(seconds := 2.0) -> void:
 	if quit_prompt_label == null:
 		return
 	quit_prompt_label.visible = true
+	quit_prompt_panel.visible = true
 	if _quit_tween:
 		_quit_tween.kill()
 	_quit_tween = create_tween()
 	_quit_tween.tween_interval(seconds)
-	_quit_tween.tween_callback(func() -> void: quit_prompt_label.visible = false)
+	_quit_tween.tween_callback(func() -> void:
+		quit_prompt_label.visible = false
+		quit_prompt_panel.visible = false)
 
 
 func show_event_roulette(names: Array, chosen: String, seconds := 2.0, color := UiTheme.ACCENT) -> void:
@@ -235,7 +254,10 @@ func show_win(winner_id: int, final_scores: Array) -> void:
 	box.add_theme_constant_override("separation", 12)
 	win_panel.add_child(box)
 	var title := Label.new()
-	title.text = "BOT WINS!" if vs_bot and winner_id == 2 else "PLAYER %d WINS!" % winner_id
+	if vs_bot:
+		title.text = "BOT WINS!" if winner_id == 2 else "YOU WIN!"
+	else:
+		title.text = "PLAYER %d WINS!" % winner_id
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", UiTheme.FONT_LARGE)
 	title.add_theme_color_override("font_color", PLAYER_COLORS[winner_id - 1])
@@ -258,6 +280,18 @@ func show_win(winner_id: int, final_scores: Array) -> void:
 	menu_button.pressed.connect(menu_pressed.emit)
 	row.add_child(menu_button)
 	_arm_panel_keys([rematch_button, menu_button], rematch_button)
+
+
+func _input(event: InputEvent) -> void:
+	if win_panel == null or not event is InputEventKey:
+		return
+	var key := event as InputEventKey
+	if key.physical_keycode in [KEY_ENTER, KEY_KP_ENTER] or key.keycode in [KEY_ENTER, KEY_KP_ENTER]:
+		return
+	for action in PANEL_JUMP_ACTIONS:
+		if InputMap.has_action(action) and event.is_action(action):
+			get_viewport().set_input_as_handled()
+			return
 
 
 func _arm_panel_keys(buttons: Array, first: Button) -> void:
