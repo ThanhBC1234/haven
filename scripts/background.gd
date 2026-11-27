@@ -46,8 +46,7 @@ func _forest(view: Vector2, offset: float, base_y: float, tree_h: float, gap: fl
 		for tier in 3:
 			var top := base_y - h + tier * h * 0.22
 			var half := w * (0.55 + tier * 0.22)
-			var tri := PackedVector2Array([Vector2(x, top), Vector2(x - half, top + h * 0.42), Vector2(x + half, top + h * 0.42)])
-			draw_primitive(tri, PackedColorArray([color, color, color]), PackedVector2Array())
+			draw_colored_polygon(PackedVector2Array([Vector2(x, top), Vector2(x - half, top + h * 0.42), Vector2(x + half, top + h * 0.42)]), color)
 
 
 func _fireflies(view: Vector2, cam_x: float) -> void:
@@ -55,8 +54,5 @@ func _fireflies(view: Vector2, cam_x: float) -> void:
 		var fx := fposmod(i * 197.0 - cam_x * 0.6 + sin(_time * 0.7 + i) * 30.0, view.x)
 		var fy := view.y * (0.45 + 0.4 * fposmod(i * 0.618, 1.0)) + sin(_time * 1.3 + i * 2.0) * 12.0
 		var glow := 0.35 + 0.65 * maxf(0.0, sin(_time * 2.0 + i * 1.7))
-		var p := Vector2(roundf(fx), roundf(fy))
-		var halo := Color(FIREFLY, 0.12 * glow)
-		draw_rect(Rect2(p.x - 4, p.y - 2, 8, 4), halo)
-		draw_rect(Rect2(p.x - 2, p.y - 4, 4, 8), halo)
-		draw_rect(Rect2(p.x - 1, p.y - 1, 2, 2), Color(FIREFLY, 0.9 * glow))
+		draw_circle(Vector2(fx, fy), 4.0, Color(FIREFLY, 0.12 * glow))
+		draw_circle(Vector2(fx, fy), 1.5, Color(FIREFLY, 0.9 * glow))

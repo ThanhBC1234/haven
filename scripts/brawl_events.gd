@@ -45,7 +45,6 @@ var _saved := {}
 var _ice: IceOverlay = null
 var _bomb: BombMarker = null
 var _pass_cd := 0.0
-var _beep_left := 0.0
 var _swap_tries := 0
 var _swap_wait := 0
 var _swap_velocities: Array[Vector2] = []
@@ -152,7 +151,6 @@ func _begin(id: String) -> void:
 	active_event = id
 	time_left = duration_of(id)
 	_pass_cd = 0.0
-	_beep_left = 0.0
 	if id == "ice_floor":
 		_ice_on()
 	elif id == "hot_potato":
@@ -295,7 +293,6 @@ func _do_swap() -> bool:
 	a.teleport(pos_b + Vector2(0.0, b.radius - a.radius))
 	b.teleport(pos_a + Vector2(0.0, a.radius - b.radius))
 	_swap_wait = 2
-	Sfx.play("item_swap")
 	return true
 
 
@@ -327,7 +324,7 @@ func _set_carrier(ball: Ball) -> void:
 	_bomb = BombMarker.new()
 	_bomb.fuse_left = fuse
 	_bomb.fuse_total = total
-	_bomb.position = BombMarker.offset_for(ball)
+	_bomb.position = Vector2(0, -(ball.radius + BOMB_OFFSET))
 	ball.add_child(_bomb)
 
 
@@ -335,7 +332,6 @@ func _tick_potato(delta: float) -> void:
 	_pass_cd = maxf(0.0, _pass_cd - delta)
 	if _bomb != null:
 		_bomb.fuse_left = maxf(0.0, time_left)
-		_beep_fuse(delta)
 	var other := brawl.opponent_of(bomb_carrier)
 	if _pass_cd > 0.0 or bomb_carrier.dead or other.dead or other.invuln > 0.0:
 		return
@@ -348,21 +344,11 @@ func _tick_potato(delta: float) -> void:
 		brawl.hud.flash("%s HAS THE BOMB!" % brawl.player_name(other), 0.8, BrawlHud.PLAYER_COLORS[brawl.balls.find(other)])
 
 
-func _beep_fuse(delta: float) -> void:
-	_beep_left -= delta
-	if _beep_left > 0.0:
-		return
-	var urgency := 1.0 - clampf(_bomb.fuse_left / maxf(_bomb.fuse_total, 0.01), 0.0, 1.0)
-	Sfx.play("fuse", urgency * 6.0)
-	_beep_left = lerpf(1.0, 0.1, urgency * urgency)
-
-
 func _explode_potato() -> void:
 	var carrier := bomb_carrier
 	var pos := carrier.global_position
 	_burst(pos, Color("#ffb020"), 70, 160.0, 520.0, 0.9)
 	_burst(pos, Color("#f7d046"), 40, 100.0, 380.0, 0.7)
-	Sfx.play("explosion")
 	var ring := Ring.new()
 	ring.position = Vector2(pos.x, minf(pos.y, brawl.level.size.y - 24.0))
 	brawl.level.add_child(ring)
@@ -413,7 +399,6 @@ func _burst(pos: Vector2, color: Color, amount: int, vmin: float, vmax: float, l
 
 class BombMarker extends Node2D:
 	const PX := 7.0
-	const SCREEN_PAD := 4.0
 	var fuse_left := 8.0
 	var fuse_total := 8.0
 	var lit := false
@@ -424,28 +409,7 @@ class BombMarker extends Node2D:
 		z_index = 20
 		_font = UiTheme.main_font()
 
-	static func offset_for(ball: Ball) -> Vector2:
-		var want := Vector2(0.0, -(ball.radius + BOMB_OFFSET))
-		var half := PixelArt.size_of(PixelArt.BOMB, PX) / 2.0
-		var view := ball.get_viewport()
-		if view == null:
-			return want
-		var inv := view.get_canvas_transform().affine_inverse()
-		var top_left: Vector2 = inv * Vector2.ZERO
-		var bottom_right: Vector2 = inv * view.get_visible_rect().size
-		var min_y := top_left.y + half.y + SCREEN_PAD - ball.global_position.y
-		if want.y >= min_y:
-			return want
-		var at := Vector2(0.0, min_y)
-		if min_y > -(ball.radius + half.y):
-			var side := 1.0 if ball.global_position.x < (top_left.x + bottom_right.x) / 2.0 else -1.0
-			at.x = side * (ball.radius + half.x + 2.0)
-		return at
-
 	func _process(delta: float) -> void:
-		var ball := get_parent() as Ball
-		if ball != null:
-			position = offset_for(ball)
 		var urgency := 1.0 - clampf(fuse_left / maxf(fuse_total, 0.01), 0.0, 1.0)
 		_phase += (2.0 + 14.0 * urgency * urgency) * delta
 		lit = fmod(_phase, 1.0) < 0.5

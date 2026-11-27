@@ -294,7 +294,6 @@ func _on_stomped(victim: Ball, stomper: Ball) -> void:
 	if not match_running or _busy or stomper.dead or victim.dead or victim.invuln > 0.0:
 		return
 	if rope.steal_bead(stomper, victim):
-		Sfx.play("star_steal")
 		hud.flash("P%d STEALS A STAR!" % stomper.player_id, 1.0, ChainedHud.PLAYER_COLORS[stomper.player_id - 1])
 
 
@@ -322,7 +321,6 @@ func _death_sequence(cause: String, culprit: Ball) -> void:
 	rope.release_pins()
 	for ball in balls:
 		_pop_effect(ball.global_position, ChainedHud.PLAYER_COLORS[ball.player_id - 1])
-		Sfx.play("pop")
 		ball.hide()
 		ball.collision_layer = 0
 		ball.teleport(respawn_points[ball.player_id - 1])
@@ -333,7 +331,6 @@ func _death_sequence(cause: String, culprit: Ball) -> void:
 		text += "\nP%d DROPPED %d STAR%s!" % [culprit.player_id, dropped, "" if dropped == 1 else "S"]
 	if lives <= 0:
 		hud.flash("Out of lives! Restarting...", restart_delay + 0.5, Color("#ff5d5d"))
-		Sfx.play("lose")
 		await get_tree().create_timer(restart_delay).timeout
 		if not is_inside_tree():
 			return
@@ -352,7 +349,6 @@ func _respawn(dropped: int, owner_id := 1) -> void:
 		ball.teleport(respawn_points[ball.player_id - 1])
 		ball.collision_layer = BALL_LAYER
 		ball.show()
-		Sfx.play("respawn")
 		ball.invuln = RESPAWN_INVULN
 		ball.dead = false
 	rope.reset()
@@ -436,7 +432,6 @@ func _on_finished() -> void:
 		ball.dead = true
 	level_finished.emit(result)
 	hud.flash("FINISH!", finish_panel_delay, Color("#f7d046"))
-	Sfx.play("win")
 	await get_tree().create_timer(finish_panel_delay).timeout
 	if not is_inside_tree():
 		return

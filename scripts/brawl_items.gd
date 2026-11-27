@@ -106,7 +106,6 @@ func _tick_boxes() -> void:
 func _pick(box: ItemBox, ball: Ball) -> void:
 	var id := box.item_id
 	_remove_box(box)
-	Sfx.play("item_pick")
 	give(ball, id)
 	item_picked.emit(ball, id)
 
@@ -179,7 +178,6 @@ func _use_banana(ball: Ball, i: int) -> bool:
 		return false
 	_clear_hand(i)
 	_start_banana(target)
-	Sfx.play("item_banana")
 	brawl.hud.flash("BANANA! %s IS DIZZY!" % brawl.player_name(target), 1.0, BrawlHud.PLAYER_COLORS[i])
 	return true
 
@@ -204,7 +202,6 @@ func _use_spring(ball: Ball, i: int) -> bool:
 	trap.owner_ball = ball
 	brawl.level.add_child(trap)
 	traps.append(trap)
-	Sfx.play("item_trap")
 	return true
 
 
@@ -412,7 +409,6 @@ func _tick_traps(delta: float) -> void:
 			if ball.dead or not _trap_touches(trap, ball):
 				continue
 			ball.bounce_up(spring_launch)
-			Sfx.play("spring")
 			_burst(trap.position + Vector2(0.0, -16.0), Color("#e8455a"), 14, 80.0, 260.0, 0.45)
 			_remove_trap(trap, false)
 			trap_sprung.emit(ball)
@@ -424,18 +420,6 @@ func _trap_touches(trap: SpringTrap, ball: Ball) -> bool:
 	var c := ball.global_position
 	var nearest := Vector2(clampf(c.x, area.position.x, area.end.x), clampf(c.y, area.position.y, area.end.y))
 	return c.distance_to(nearest) <= ball.radius
-
-
-func trap_near(trap: SpringTrap, pos: Vector2, reach: float) -> bool:
-	var area := Rect2(trap.position + Vector2(-TRAP_HALF_WIDTH, -TRAP_HEIGHT), Vector2(TRAP_HALF_WIDTH * 2.0, TRAP_HEIGHT))
-	var nearest := Vector2(clampf(pos.x, area.position.x, area.end.x), clampf(pos.y, area.position.y, area.end.y))
-	return pos.distance_to(nearest) <= reach
-
-
-func clear_traps_near(pos: Vector2, reach: float) -> void:
-	for trap in traps.duplicate():
-		if is_instance_valid(trap) and trap_near(trap, pos, reach):
-			_remove_trap(trap)
 
 
 func _remove_trap(trap: SpringTrap, fx := true) -> void:

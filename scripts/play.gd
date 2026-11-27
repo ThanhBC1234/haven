@@ -91,13 +91,11 @@ func _on_ball_hurt() -> void:
 	lives -= 1
 	hud.set_lives(lives)
 	_pop_effect(ball.global_position)
-	Sfx.play("pop")
 	ball.dead = true
 	ball.hide()
 	ball.teleport(respawn_position)
 	if lives <= 0:
 		hud.show_message("Out of lives! Restarting...")
-		Sfx.play("lose")
 		await get_tree().create_timer(1.4).timeout
 		Game.start_level(Game.level_index)
 		return
@@ -108,7 +106,6 @@ func _on_ball_hurt() -> void:
 	ball.dead = false
 	ball.invuln = 1.5
 	ball.show()
-	Sfx.play("respawn")
 	_busy = false
 
 
@@ -129,7 +126,6 @@ func _on_finished() -> void:
 	_done = true
 	ball.dead = true
 	Game.record_stars(Game.level_index, stars)
-	Sfx.play("win")
 	var has_next := Game.level_index + 1 < LevelData.LEVELS.size()
 	hud.show_complete(stars, level.star_total, has_next)
 

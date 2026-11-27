@@ -127,7 +127,6 @@ func take_damage(amount: int) -> void:
 	if state == State.SLEEP:
 		_wake()
 	hp = maxi(0, hp - amount)
-	Sfx.play("boss_hit")
 	_flash = 0.12
 	hp_changed.emit(hp, max_hp)
 	if hp == 0:
@@ -139,8 +138,6 @@ func _die() -> void:
 	hurtbox.set_deferred("monitoring", false)
 	hurtbox.set_deferred("monitorable", false)
 	died.emit()
-	Sfx.play("explosion")
-	Sfx.play("win_match")
 	var level := Level.of(self)
 	if level:
 		level.defeat_boss(self)
